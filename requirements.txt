@@ -4,6 +4,10 @@
 # Core functionality (uses only Python standard library)
 # No external dependencies required for the basic functionality
 
+# TOML support for Codex CLI (required for v2)
+tomli>=2.0.0; python_version < "3.11"
+tomli_w>=1.0.0
+
 # Testing dependencies (optional)
 pytest>=7.0.0
 pytest-cov>=4.0.0

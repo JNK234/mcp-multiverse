@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ABOUTME: Universal MCP Server Sync Manager
-ABOUTME: Synchronizes MCP server configurations across multiple platforms (Claude Code, Gemini CLI, Cline, Roo Code)
+ABOUTME: Universal MCP Server Sync Manager v2
+ABOUTME: Synchronizes MCP servers across Claude Code, Gemini CLI, Cline, Roo Code, and Codex CLI
 """
 
 import json
@@ -14,6 +14,13 @@ from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, asdict
 import shutil
 from datetime import datetime
+
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    import tomli as tomllib  # Backward compatibility
+
+import tomli_w  # For writing TOML
 
 # Configure logging
 logging.basicConfig(
@@ -37,6 +44,12 @@ class MCPServer:
     auto_approve: Optional[List[str]] = None  # Renamed from autoApprove
     timeout: Optional[int] = None
     transport_type: Optional[str] = None  # Renamed from transportType
+    url: Optional[str] = None  # For HTTP servers (Codex)
+    http_headers: Optional[Dict[str, str]] = None  # For HTTP servers (Codex)
+    startup_timeout_sec: Optional[int] = None  # Codex-specific
+    tool_timeout_sec: Optional[int] = None  # Codex-specific
+    enabled_tools: Optional[List[str]] = None  # Codex-specific
+    bearer_token_env_var: Optional[str] = None  # Codex-specific
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
@@ -55,6 +68,32 @@ class MCPServer:
             result["transportType"] = self.transport_type
         return result
 
+    def to_toml_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for TOML serialization (Codex)"""
+        result = {}
+        if self.command:
+            result["command"] = self.command
+        if self.args:
+            result["args"] = self.args
+        if self.env:
+            result["env"] = self.env
+        if self.timeout is not None:
+            result["timeout"] = self.timeout
+        # HTTP-specific fields
+        if self.url:
+            result["url"] = self.url
+        if self.http_headers:
+            result["http_headers"] = self.http_headers
+        if self.startup_timeout_sec is not None:
+            result["startup_timeout_sec"] = self.startup_timeout_sec
+        if self.tool_timeout_sec is not None:
+            result["tool_timeout_sec"] = self.tool_timeout_sec
+        if self.enabled_tools:
+            result["enabled_tools"] = self.enabled_tools
+        if self.bearer_token_env_var:
+            result["bearer_token_env_var"] = self.bearer_token_env_var
+        return result
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MCPServer":
         """Create MCPServer from dictionary"""
@@ -65,7 +104,13 @@ class MCPServer:
             disabled=data.get("disabled"),
             auto_approve=data.get("autoApprove") or data.get("auto_approve"),
             timeout=data.get("timeout"),
-            transport_type=data.get("transportType") or data.get("transport_type")
+            transport_type=data.get("transportType") or data.get("transport_type"),
+            url=data.get("url"),
+            http_headers=data.get("http_headers"),
+            startup_timeout_sec=data.get("startup_timeout_sec"),
+            tool_timeout_sec=data.get("tool_timeout_sec"),
+            enabled_tools=data.get("enabled_tools"),
+            bearer_token_env_var=data.get("bearer_token_env_var")
         )
 
 
@@ -76,8 +121,9 @@ class Platforms:
         self.home = Path.home()
 
         # Claude Code configurations
-        self.claude_user_config = self.home / ".claude" / "claude_desktop_config.json"
-        self.claude_project_config = Path.cwd() / ".claude" / "mcp_config.json"
+        # Claude Code stores MCPs in ~/.claude.json under project paths
+        self.claude_code_config = self.home / ".claude.json"
+        self.claude_desktop_config = self.home / ".claude" / "claude_desktop_config.json"  # For Claude Desktop
 
         # Claude Code compatibility: also support direct mcp.json
         self.claude_mcp_json = Path.cwd() / ".mcp.json"
@@ -116,6 +162,9 @@ class Platforms:
                 if path.exists():
                     self.roo_config = path
                     break
+
+        # Codex CLI configuration (TOML format)
+        self.codex_config = self.home / ".codex" / "config.toml"
 
 
 class MCPSyncManager:
@@ -165,6 +214,46 @@ class MCPSyncManager:
             logger.error(f"Error saving {path}: {e}")
             return False
 
+    def load_toml(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Load TOML file with error handling"""
+        try:
+            if not path.exists():
+                logger.warning(f"Config file not found: {path}")
+                return None
+
+            with open(path, 'rb') as f:
+                return tomllib.load(f)
+        except Exception as e:
+            logger.error(f"Error reading TOML from {path}: {e}")
+            return None
+
+    def save_toml(self, path: Path, data: Dict[str, Any]) -> bool:
+        """Save TOML file with error handling"""
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, 'wb') as f:
+                tomli_w.dump(data, f)
+            logger.info(f"Saved TOML configuration to {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving TOML to {path}: {e}")
+            return False
+
+    def extract_claude_code_servers(self, config: Dict[str, Any]) -> Dict[str, MCPServer]:
+        """Extract MCP servers from Claude Code configuration (project-level)"""
+        servers = {}
+
+        # Claude Code stores mcpServers under project paths in ~/.claude.json
+        for project_path, project_config in config.items():
+            if isinstance(project_config, dict) and "mcpServers" in project_config:
+                for name, server_data in project_config["mcpServers"].items():
+                    try:
+                        servers[f"{name}_{project_path}"] = MCPServer.from_dict(server_data)
+                    except Exception as e:
+                        logger.warning(f"Error parsing server {name} in project {project_path}: {e}")
+
+        return servers
+
     def extract_mcp_servers(self, config: Dict[str, Any]) -> Dict[str, MCPServer]:
         """Extract MCP servers from configuration"""
         if not config or "mcpServers" not in config:
@@ -176,6 +265,20 @@ class MCPSyncManager:
                 servers[name] = MCPServer.from_dict(server_data)
             except Exception as e:
                 logger.warning(f"Error parsing server {name}: {e}")
+
+        return servers
+
+    def extract_codex_servers(self, config: Dict[str, Any]) -> Dict[str, MCPServer]:
+        """Extract MCP servers from Codex TOML configuration"""
+        if not config or "mcp_servers" not in config:
+            return {}
+
+        servers = {}
+        for name, server_data in config["mcp_servers"].items():
+            try:
+                servers[name] = MCPServer.from_dict(server_data)
+            except Exception as e:
+                logger.warning(f"Error parsing Codex server {name}: {e}")
 
         return servers
 
@@ -195,6 +298,23 @@ class MCPSyncManager:
         if platform == "claude":
             # Claude uses simple format
             return {"mcpServers": formatted_servers}
+
+        elif platform == "claude_code":
+            # Claude Code stores under project paths in ~/.claude.json
+            # For now, we'll use a general project path
+            project_path = str(Path.cwd())
+            return {
+                project_path: {
+                    "mcpServers": formatted_servers
+                }
+            }
+
+        elif platform == "codex":
+            # Codex uses TOML format
+            formatted = {}
+            for name, server in servers.items():
+                formatted[name] = server.to_toml_dict()
+            return {"mcp_servers": formatted}
 
         elif platform == "gemini":
             # Gemini has additional top-level sections
@@ -228,11 +348,18 @@ class MCPSyncManager:
         """Read and aggregate servers from all platforms"""
         all_servers = {}
 
-        # Claude
-        claude_config = self.load_json(self.platforms.claude_user_config)
+        # Claude Desktop (simple format)
+        claude_config = self.load_json(self.platforms.claude_desktop_config)
         if claude_config:
             servers = self.extract_mcp_servers(claude_config)
-            logger.info(f"Found {len(servers)} servers in Claude config")
+            logger.info(f"Found {len(servers)} servers in Claude Desktop config")
+            all_servers.update(servers)
+
+        # Claude Code (project-level in ~/.claude.json)
+        claude_code_config = self.load_json(self.platforms.claude_code_config)
+        if claude_code_config:
+            servers = self.extract_claude_code_servers(claude_code_config)
+            logger.info(f"Found {len(servers)} servers in Claude Code config")
             all_servers.update(servers)
 
         # Gemini
@@ -256,19 +383,36 @@ class MCPSyncManager:
             logger.info(f"Found {len(servers)} servers in Roo config")
             all_servers.update(servers)
 
+        # Codex (TOML format)
+        codex_config = self.load_toml(self.platforms.codex_config)
+        if codex_config:
+            servers = self.extract_codex_servers(codex_config)
+            logger.info(f"Found {len(servers)} servers in Codex config")
+            all_servers.update(servers)
+
         logger.info(f"Total unique servers found across all platforms: {len(all_servers)}")
         return all_servers
 
     def sync_to_platform(self, servers: Dict[str, MCPServer], platform: str) -> bool:
         """Sync servers to a specific platform"""
         if platform == "claude":
-            config_path = self.platforms.claude_user_config
+            config_path = self.platforms.claude_desktop_config
+            format_type = "claude"
+        elif platform == "claude_code":
+            config_path = self.platforms.claude_code_config
+            format_type = "claude_code"
+        elif platform == "codex":
+            config_path = self.platforms.codex_config
+            format_type = "codex"
         elif platform == "gemini":
             config_path = self.platforms.gemini_config
+            format_type = "gemini"
         elif platform == "cline":
             config_path = self.platforms.cline_config
+            format_type = "cline"
         elif platform == "roo":
             config_path = self.platforms.roo_config
+            format_type = "roo"
         else:
             logger.error(f"Unknown platform: {platform}")
             return False
@@ -276,21 +420,41 @@ class MCPSyncManager:
         # Create backup
         self.backup_config(config_path, platform)
 
-        # Load existing config if it exists
-        existing_config = self.load_json(config_path) or {}
+        if platform == "codex":
+            # Handle TOML for Codex
+            existing_config = self.load_toml(config_path) or {}
+            formatted_config = self.format_for_platform(servers, format_type)
 
-        # Format servers for the platform
-        formatted_config = self.format_for_platform(servers, platform)
+            # Merge with existing for Codex (preserve other sections)
+            for key, value in formatted_config.items():
+                existing_config[key] = value
 
-        # Merge non-MCP sections for platforms that have them
-        if platform == "gemini":
-            # Preserve existing general/security/ui/output sections
-            for section in ["general", "security", "ui", "output"]:
-                if section in existing_config:
-                    formatted_config[section] = existing_config[section]
+            return self.save_toml(config_path, existing_config)
+        else:
+            # Handle JSON for all other platforms
+            existing_config = self.load_json(config_path) or {}
+            formatted_config = self.format_for_platform(servers, format_type)
 
-        # Save the updated config
-        return self.save_json(config_path, formatted_config)
+            # Merge non-MCP sections for platforms that have them
+            if platform == "gemini":
+                # Preserve existing general/security/ui/output sections
+                for section in ["general", "security", "ui", "output"]:
+                    if section in existing_config:
+                        formatted_config[section] = existing_config[section]
+
+            # For Claude Code, need to handle project-level structure
+            if platform == "claude_code":
+                # Merge with existing project configs
+                for project_path, project_config in existing_config.items():
+                    if project_path in formatted_config:
+                        # Update existing project
+                        if "mcpServers" in formatted_config[project_path]:
+                            existing_config[project_path]["mcpServers"] = formatted_config[project_path]["mcpServers"]
+                    else:
+                        # Keep existing projects that aren't being updated
+                        formatted_config[project_path] = project_config
+
+            return self.save_json(config_path, formatted_config)
 
     def sync_all(self, source_platform: str = None) -> Dict[str, bool]:
         """Sync MCP servers to all platforms"""
@@ -300,7 +464,11 @@ class MCPSyncManager:
         if source_platform:
             # Sync from a specific platform
             if source_platform == "claude":
-                config = self.load_json(self.platforms.claude_user_config)
+                config = self.load_json(self.platforms.claude_desktop_config)
+            elif source_platform == "claude_code":
+                config = self.load_json(self.platforms.claude_code_config)
+            elif source_platform == "codex":
+                config = self.load_toml(self.platforms.codex_config)
             elif source_platform == "gemini":
                 config = self.load_json(self.platforms.gemini_config)
             elif source_platform == "cline":
@@ -311,14 +479,20 @@ class MCPSyncManager:
                 logger.error(f"Unknown source platform: {source_platform}")
                 return results
 
-            servers = self.extract_mcp_servers(config or {})
+            if source_platform == "codex":
+                servers = self.extract_codex_servers(config or {})
+            elif source_platform == "claude_code":
+                servers = self.extract_claude_code_servers(config or {})
+            else:
+                servers = self.extract_mcp_servers(config or {})
+
             logger.info(f"Syncing from {source_platform}: {len(servers)} servers")
         else:
             # Sync aggregated servers from all platforms
             servers = self.read_servers_from_all_platforms()
 
         # Sync to all platforms
-        platforms = ["claude", "gemini", "cline", "roo"]
+        platforms = ["claude", "claude_code", "codex", "gemini", "cline", "roo"]
         for platform in platforms:
             logger.info(f"\nSyncing to {platform}...")
             try:
@@ -353,6 +527,10 @@ class MCPSyncManager:
                 print(f"   Environment variables: {', '.join(server.env.keys())}")
             if server.disabled is not None:
                 print(f"   Status: {'Disabled' if server.disabled else 'Enabled'}")
+            if server.timeout:
+                print(f"   Timeout: {server.timeout}s")
+            if server.url:
+                print(f"   URL: {server.url}")
 
         print(f"\nTotal: {len(servers)} servers\n")
 
@@ -414,7 +592,7 @@ def main():
     sync_parser.add_argument(
         "--from",
         dest="source_platform",
-        choices=["claude", "gemini", "cline", "roo"],
+        choices=["claude", "claude_code", "codex", "gemini", "cline", "roo"],
         help="Sync from a specific platform (default: merge from all)"
     )
 
