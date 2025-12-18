@@ -1,0 +1,15 @@
+# Requirements for MCP Sync Manager
+# This file lists dependencies for the universal MCP sync manager
+
+# Core functionality (uses only Python standard library)
+# No external dependencies required for the basic functionality
+
+# Testing dependencies (optional)
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.0.0
+
+# Development dependencies (optional)
+black>=22.0.0
+flake8>=5.0.0
+mypy>=1.0.0
