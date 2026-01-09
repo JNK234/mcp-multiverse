@@ -67,7 +67,7 @@ class ClaudeAdapter(PlatformAdapter):
         """Save MCP servers to project-level config.
 
         ABOUTME: Creates .mcp.json file in project directory
-        ABOUTME: Uses simplified JSON format for project config
+        ABOUTME: Uses mcpServers wrapper key per spec
 
         Args:
             servers: Dict of servers to save
@@ -81,5 +81,5 @@ class ClaudeAdapter(PlatformAdapter):
             name: server_to_dict(server) for name, server in servers.items()
         }
 
-        # Write project config
-        write_json_file(project_config, mcp_servers)
+        # Write project config with mcpServers wrapper
+        write_json_file(project_config, {"mcpServers": mcp_servers})

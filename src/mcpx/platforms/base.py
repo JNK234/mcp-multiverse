@@ -42,10 +42,9 @@ def server_to_dict(server: MCPServer) -> dict[str, Any]:
     ABOUTME: Converts dataclass to dict for JSON serialization
     ABOUTME: Omits empty env dict for cleaner output
     ABOUTME: Handles both stdio and HTTP server types
+    ABOUTME: Does NOT include 'type' field - that's internal to mcpx
     """
-    result: dict[str, Any] = {
-        "type": server.type,
-    }
+    result: dict[str, Any] = {}
 
     if server.type == "stdio":
         result["command"] = server.command
