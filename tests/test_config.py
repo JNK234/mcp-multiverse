@@ -160,8 +160,8 @@ def test_load_config_missing_servers_section(tmp_path):
 
 
 def test_load_config_server_missing_type(tmp_path):
-    """Test server definition without type field."""
-    config_file = tmp_path / "invalid.json"
+    """Test server definition without type field (should auto-detect as stdio)."""
+    config_file = tmp_path / "config.json"
     config_content = {
         "mcpx": {
             "version": "1.0"
@@ -174,8 +174,11 @@ def test_load_config_server_missing_type(tmp_path):
     }
     config_file.write_text(json.dumps(config_content, indent=2))
 
-    with pytest.raises(ValueError, match="Server 'test' missing required 'type' field"):
-        load_config(config_file)
+    # Should auto-detect as stdio (has command field)
+    config = load_config(config_file)
+    assert "test" in config.servers
+    assert config.servers["test"].type == "stdio"
+    assert config.servers["test"].command == "echo"
 
 
 def test_load_config_server_missing_command(tmp_path):

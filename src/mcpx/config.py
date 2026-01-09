@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from mcpx.models import Config, MCPServer
+from mcpx.platforms.base import dict_to_server
 from mcpx.utils import expand_env_vars
 
 # ABOUTME: Type alias for raw server config data
@@ -82,66 +83,30 @@ def load_config(path: Path) -> Config:
     # Parse each server definition
     servers: dict[str, MCPServer] = {}
     for server_name, server_config in servers_data.items():
-        # Validate required type field
-        if "type" not in server_config:
-            raise ValueError(
-                f"Server '{server_name}' missing required 'type' field"
-            )
+        # Auto-detect server type and validate
+        server = dict_to_server(server_name, server_config)
 
-        server_type = server_config["type"]
-
-        if server_type == "stdio":
-            # Validate stdio-specific required fields
-            if "command" not in server_config:
-                raise ValueError(
-                    f"Server '{server_name}' missing required 'command' field for stdio type"
-                )
-
-            command = server_config["command"]
-            args = server_config.get("args", [])
-            env_dict = server_config.get("env", {})
-
-            # Expand environment variables in all string values
-            command = expand_env_vars(command)
-            args = [expand_env_vars(str(arg)) for arg in args]
-            env = {key: expand_env_vars(str(value)) for key, value in env_dict.items()}
-
-            servers[server_name] = MCPServer(
-                name=server_name,
+        # Expand environment variables after server creation
+        if server.type == "stdio":
+            server = MCPServer(
+                name=server.name,
                 type="stdio",
-                command=command,
-                args=args,
-                env=env,
+                command=expand_env_vars(server.command),
+                args=[expand_env_vars(str(arg)) for arg in server.args],
+                env={key: expand_env_vars(str(value)) for key, value in server.env.items()}
             )
-
-        elif server_type == "http":
-            # Validate HTTP-specific required fields
-            if "url" not in server_config:
-                raise ValueError(
-                    f"Server '{server_name}' missing required 'url' field for http type"
-                )
-
-            url = server_config["url"]
-            headers = server_config.get("headers", {})
-
-            # Expand environment variables
-            url = expand_env_vars(url)
-            headers = {
-                key: expand_env_vars(str(value))
-                for key, value in headers.items()
-            }
-
-            servers[server_name] = MCPServer(
-                name=server_name,
+        elif server.type == "http":
+            server = MCPServer(
+                name=server.name,
                 type="http",
-                url=url,
-                headers=headers,
+                url=expand_env_vars(server.url),
+                headers={
+                    key: expand_env_vars(str(value))
+                    for key, value in server.headers.items()
+                } if server.headers else {}
             )
 
-        else:
-            raise ValueError(
-                f"Server '{server_name}' has invalid type '{server_type}'. Must be 'stdio' or 'http'."
-            )
+        servers[server_name] = server
 
     return Config(version=version, servers=servers)
 

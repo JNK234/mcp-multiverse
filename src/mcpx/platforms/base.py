@@ -66,8 +66,18 @@ def dict_to_server(name: str, data: dict[str, Any]) -> MCPServer:
     ABOUTME: Handles missing env field gracefully
     ABOUTME: Validates required command field for stdio servers
     ABOUTME: Supports both stdio and HTTP server types
+    ABOUTME: Auto-detects server type from data (url = http, command = stdio)
     """
-    server_type = data.get("type", "stdio")
+    # Auto-detect server type from data structure
+    # If there's a 'url' field, it's an HTTP server
+    # If there's a 'command' field, it's a stdio server
+    # If 'type' is explicitly set, use that (overrides auto-detection)
+    if "type" in data:
+        server_type = data["type"]
+    elif "url" in data:
+        server_type = "http"
+    else:
+        server_type = "stdio"
 
     if server_type == "stdio":
         if "command" not in data:
