@@ -3,13 +3,9 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from mcpx.models import MCPServer
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(frozen=True)

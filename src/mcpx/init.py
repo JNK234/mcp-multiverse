@@ -1,4 +1,5 @@
 # Project-level MCP initialization
+import json
 import sys
 from pathlib import Path
 
@@ -7,8 +8,6 @@ from mcpx.models import MCPServer
 
 # ABOUTME: Terminal codes for interactive UI
 CLEAR_SCREEN = "\033[2J\033[H"
-CLEAR_LINE = "\033[K"
-MOVE_UP = "\033[A"
 BOLD = "\033[1m"
 RESET = "\033[0m"
 GREEN = "\033[92m"
@@ -139,8 +138,6 @@ def load_project_config(project_dir: Path) -> set[str] | None:
         return None
 
     try:
-        import json
-
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 

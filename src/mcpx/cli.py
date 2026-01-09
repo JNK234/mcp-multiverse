@@ -193,8 +193,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
     ABOUTME: Performs full validation per spec section 5.2
     ABOUTME: Returns exit code based on validation results
     """
-    import shutil
-
     # Print header
     print(f"mcpx validate v{__version__}")
     print()
