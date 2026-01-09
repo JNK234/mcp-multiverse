@@ -1,9 +1,10 @@
-# Tests for backup utilities
+# ABOUTME: Tests for backup utilities.
+# ABOUTME: Covers create_backup, get_backup_dir, and cleanup_old_backups functions.
 from pathlib import Path
 
 import pytest
 
-from mcpx.utils.backup import create_backup, get_backup_dir
+from mcpx.utils.backup import cleanup_old_backups, create_backup, get_backup_dir
 
 
 class TestGetBackupDir:
@@ -145,3 +146,184 @@ class TestCreateBackup:
 
         assert isinstance(backup_path, Path)
         assert backup_path.is_absolute()
+
+
+class TestCleanupOldBackups:
+    """Tests for cleanup_old_backups function."""
+
+    def test_returns_empty_list_for_nonexistent_dir(self, tmp_path):
+        """Test that cleanup returns empty list if backup dir doesn't exist."""
+        backup_dir = tmp_path / "nonexistent"
+        deleted = cleanup_old_backups(backup_dir)
+        assert deleted == []
+
+    def test_returns_empty_list_for_empty_dir(self, tmp_path):
+        """Test that cleanup returns empty list for empty directory."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        deleted = cleanup_old_backups(backup_dir)
+        assert deleted == []
+
+    def test_keeps_last_5_backups_per_platform(self, tmp_path):
+        """Test that only the last 5 backups per platform are kept."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create 7 backups for 'claude' platform
+        for i in range(7):
+            backup_file = backup_dir / f"claude_20260101_00000{i}.json"
+            backup_file.write_text("{}")
+
+        deleted = cleanup_old_backups(backup_dir)
+
+        # Should have deleted 2 (oldest)
+        assert len(deleted) == 2
+        # Should have 5 remaining
+        remaining = list(backup_dir.glob("claude_*.json"))
+        assert len(remaining) == 5
+
+    def test_keeps_newest_backups(self, tmp_path):
+        """Test that the newest backups are kept, oldest deleted."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create 7 backups with different timestamps
+        timestamps = [
+            "20260101_100000",
+            "20260101_110000",
+            "20260101_120000",
+            "20260101_130000",
+            "20260101_140000",
+            "20260101_150000",
+            "20260101_160000",
+        ]
+        for ts in timestamps:
+            backup_file = backup_dir / f"gemini_{ts}.json"
+            backup_file.write_text("{}")
+
+        deleted = cleanup_old_backups(backup_dir)
+
+        # The oldest 2 should be deleted
+        deleted_names = [p.name for p in deleted]
+        assert "gemini_20260101_100000.json" in deleted_names
+        assert "gemini_20260101_110000.json" in deleted_names
+
+        # The newest 5 should remain
+        remaining = list(backup_dir.glob("gemini_*.json"))
+        remaining_names = [p.name for p in remaining]
+        assert "gemini_20260101_120000.json" in remaining_names
+        assert "gemini_20260101_160000.json" in remaining_names
+
+    def test_handles_multiple_platforms_independently(self, tmp_path):
+        """Test that each platform is handled independently."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create 7 backups for 'claude' and 3 for 'gemini'
+        for i in range(7):
+            (backup_dir / f"claude_20260101_00000{i}.json").write_text("{}")
+        for i in range(3):
+            (backup_dir / f"gemini_20260101_00000{i}.json").write_text("{}")
+
+        deleted = cleanup_old_backups(backup_dir)
+
+        # Should delete 2 from claude, 0 from gemini
+        assert len(deleted) == 2
+        deleted_names = [p.name for p in deleted]
+        assert all("claude" in name for name in deleted_names)
+
+        # Verify counts
+        claude_remaining = list(backup_dir.glob("claude_*.json"))
+        gemini_remaining = list(backup_dir.glob("gemini_*.json"))
+        assert len(claude_remaining) == 5
+        assert len(gemini_remaining) == 3
+
+    def test_ignores_non_matching_files(self, tmp_path):
+        """Test that files not matching backup pattern are ignored."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create files that don't match the pattern
+        (backup_dir / "readme.txt").write_text("readme")
+        (backup_dir / "random_file.json").write_text("{}")
+        (backup_dir / "claude.json").write_text("{}")  # Missing timestamp
+
+        # Create 3 valid backups
+        for i in range(3):
+            (backup_dir / f"claude_20260101_00000{i}.json").write_text("{}")
+
+        deleted = cleanup_old_backups(backup_dir)
+
+        # No files should be deleted (less than 5 valid backups)
+        assert len(deleted) == 0
+        # Non-matching files should still exist
+        assert (backup_dir / "readme.txt").exists()
+        assert (backup_dir / "random_file.json").exists()
+        assert (backup_dir / "claude.json").exists()
+
+    def test_respects_custom_max_backups(self, tmp_path):
+        """Test that max_backups_per_platform parameter is respected."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create 5 backups
+        for i in range(5):
+            (backup_dir / f"claude_20260101_00000{i}.json").write_text("{}")
+
+        # Keep only 2
+        deleted = cleanup_old_backups(backup_dir, max_backups_per_platform=2)
+
+        assert len(deleted) == 3
+        remaining = list(backup_dir.glob("claude_*.json"))
+        assert len(remaining) == 2
+
+    def test_handles_different_extensions(self, tmp_path):
+        """Test that files with different extensions are handled correctly."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create backups with different extensions
+        for i in range(7):
+            (backup_dir / f"codex_20260101_00000{i}.toml").write_text("")
+
+        deleted = cleanup_old_backups(backup_dir)
+
+        # Should delete oldest 2
+        assert len(deleted) == 2
+        remaining = list(backup_dir.glob("codex_*.toml"))
+        assert len(remaining) == 5
+
+    def test_ignores_directories(self, tmp_path):
+        """Test that directories are ignored during cleanup."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Create a directory that matches backup pattern
+        subdir = backup_dir / "claude_20260101_000000.json"
+        subdir.mkdir()
+
+        deleted = cleanup_old_backups(backup_dir)
+
+        # Directory should not be deleted
+        assert len(deleted) == 0
+        assert subdir.exists()
+
+    def test_create_backup_triggers_cleanup(self, tmp_path):
+        """Test that create_backup automatically cleans up old backups."""
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+
+        # Pre-create 5 old backups
+        for i in range(5):
+            (backup_dir / f"testfile_20260101_00000{i}.json").write_text("{}")
+
+        # Create source file and run create_backup
+        source = tmp_path / "testfile.json"
+        source.write_text("{}")
+
+        # This should create a 6th backup and delete the oldest
+        create_backup(source, backup_dir)
+
+        # Should have exactly 5 backups
+        remaining = list(backup_dir.glob("testfile_*.json"))
+        assert len(remaining) == 5
