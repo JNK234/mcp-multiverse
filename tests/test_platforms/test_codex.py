@@ -79,6 +79,7 @@ def test_codex_save_creates_file(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/projects"],
         ),
@@ -100,11 +101,13 @@ def test_codex_save_toml_format(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/Users/user/projects"],
         ),
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxx"},
@@ -141,6 +144,7 @@ def test_codex_save_with_env(tmp_path: Path) -> None:
     servers = {
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_test"},
@@ -161,6 +165,7 @@ def test_codex_save_without_env(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem"],
         ),
@@ -182,12 +187,14 @@ def test_codex_roundtrip(tmp_path: Path) -> None:
     original_servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/projects"],
             env={"PATH": "/usr/bin"},
         ),
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_xxxx"},
@@ -226,6 +233,7 @@ def test_codex_save_special_characters(tmp_path: Path) -> None:
     servers = {
         "test": MCPServer(
             name="test",
+            type="stdio",
             command='cmd "with" quotes',
             args=["-y", "path\\with\\backslashes"],
             env={"KEY": 'value "with" quotes'},
@@ -249,6 +257,7 @@ def test_codex_empty_args(tmp_path: Path) -> None:
     servers = {
         "simple": MCPServer(
             name="simple",
+            type="stdio",
             command="node",
             args=[],
         ),

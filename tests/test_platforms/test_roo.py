@@ -77,6 +77,7 @@ def test_roo_save_creates_file(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/projects"],
         ),
@@ -98,6 +99,7 @@ def test_roo_save_adds_required_defaults(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem"],
         ),
@@ -127,6 +129,7 @@ def test_roo_save_preserves_env(tmp_path: Path) -> None:
     servers = {
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_test"},
@@ -165,6 +168,7 @@ def test_roo_save_replaces_all(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem"],
         ),
@@ -200,6 +204,7 @@ def test_roo_save_updates_existing(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="new-command",
             args=["--new"],
         ),
@@ -222,12 +227,14 @@ def test_roo_roundtrip(tmp_path: Path) -> None:
     original_servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/projects"],
             env={"DEBUG": "1"},
         ),
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_xxxx"},
@@ -279,6 +286,7 @@ def test_roo_json_format(tmp_path: Path) -> None:
     servers = {
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_xxxx"},
@@ -310,6 +318,7 @@ def test_roo_empty_env_not_written(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem"],
             env={},  # Empty env

@@ -61,7 +61,7 @@ class TestMergeServers:
     def test_merge_empty_existing(self):
         """Test merging when existing is empty."""
         managed = {
-            "server1": MCPServer(name="server1", command="npx", args=["-y", "pkg1"])
+            "server1": MCPServer(name="server1", type="stdio", command="npx", args=["-y", "pkg1"])
         }
         existing = {}
 
@@ -74,7 +74,7 @@ class TestMergeServers:
         """Test merging when managed is empty (all orphans)."""
         managed = {}
         existing = {
-            "orphan1": MCPServer(name="orphan1", command="npx", args=["-y", "pkg1"])
+            "orphan1": MCPServer(name="orphan1", type="stdio", command="npx", args=["-y", "pkg1"])
         }
 
         result = merge_servers(managed, existing)
@@ -85,10 +85,10 @@ class TestMergeServers:
     def test_merge_no_overlap(self):
         """Test merging with no overlapping servers."""
         managed = {
-            "server1": MCPServer(name="server1", command="npx", args=["-y", "pkg1"])
+            "server1": MCPServer(name="server1", type="stdio", command="npx", args=["-y", "pkg1"])
         }
         existing = {
-            "orphan1": MCPServer(name="orphan1", command="npx", args=["-y", "pkg2"])
+            "orphan1": MCPServer(name="orphan1", type="stdio", command="npx", args=["-y", "pkg2"])
         }
 
         result = merge_servers(managed, existing)
@@ -100,11 +100,11 @@ class TestMergeServers:
     def test_merge_with_overlap(self):
         """Test merging where managed overrides existing."""
         managed = {
-            "server1": MCPServer(name="server1", command="npx", args=["-y", "new_pkg"])
+            "server1": MCPServer(name="server1", type="stdio", command="npx", args=["-y", "new_pkg"])
         }
         existing = {
-            "server1": MCPServer(name="server1", command="npx", args=["-y", "old_pkg"]),
-            "orphan1": MCPServer(name="orphan1", command="npx", args=["-y", "pkg2"])
+            "server1": MCPServer(name="server1", type="stdio", command="npx", args=["-y", "old_pkg"]),
+            "orphan1": MCPServer(name="orphan1", type="stdio", command="npx", args=["-y", "pkg2"])
         }
 
         result = merge_servers(managed, existing)
@@ -118,10 +118,10 @@ class TestMergeServers:
     def test_merge_does_not_mutate_inputs(self):
         """Test that merge doesn't modify input dicts."""
         managed = {
-            "server1": MCPServer(name="server1", command="npx", args=["-y", "pkg1"])
+            "server1": MCPServer(name="server1", type="stdio", command="npx", args=["-y", "pkg1"])
         }
         existing = {
-            "orphan1": MCPServer(name="orphan1", command="npx", args=["-y", "pkg2"])
+            "orphan1": MCPServer(name="orphan1", type="stdio", command="npx", args=["-y", "pkg2"])
         }
 
         # Store original values
@@ -139,20 +139,25 @@ class TestSyncAll:
 
     def test_sync_all_with_valid_config(self, tmp_path, monkeypatch):
         """Test sync with valid config and mock platforms."""
-        # Create temporary config
-        config_content = """
-[mcpx]
-version = "1.0"
-
-[servers.test1]
-command = "npx"
-args = ["-y", "@test/server1"]
-
-[servers.test2]
-command = "npx"
-args = ["-y", "@test/server2"]
-"""
-        config_file = tmp_path / "config.toml"
+        # Create temporary config (JSON format)
+        config_content = """{
+  "mcpx": {
+    "version": "1.0"
+  },
+  "servers": {
+    "test1": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@test/server1"]
+    },
+    "test2": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@test/server2"]
+    }
+  }
+}"""
+        config_file = tmp_path / "config.json"
         config_file.write_text(config_content)
 
         # Mock platform adapters
@@ -210,16 +215,20 @@ args = ["-y", "@test/server2"]
 
     def test_sync_all_with_command_error(self, tmp_path, monkeypatch):
         """Test sync with server that has missing command."""
-        # Create config with invalid command
-        config_content = """
-[mcpx]
-version = "1.0"
-
-[servers.invalid]
-command = "nonexistent_command_xyz123"
-args = []
-"""
-        config_file = tmp_path / "config.toml"
+        # Create config with invalid command (JSON format)
+        config_content = """{
+  "mcpx": {
+    "version": "1.0"
+  },
+  "servers": {
+    "invalid": {
+      "type": "stdio",
+      "command": "nonexistent_command_xyz123",
+      "args": []
+    }
+  }
+}"""
+        config_file = tmp_path / "config.json"
         config_file.write_text(config_content)
 
         # Mock platforms
@@ -264,16 +273,20 @@ args = []
 
     def test_sync_all_preserves_orphans(self, tmp_path, monkeypatch):
         """Test that sync preserves orphan servers."""
-        # Create config
-        config_content = """
-[mcpx]
-version = "1.0"
-
-[servers.managed]
-command = "npx"
-args = ["-y", "@test/managed"]
-"""
-        config_file = tmp_path / "config.toml"
+        # Create config (JSON format)
+        config_content = """{
+  "mcpx": {
+    "version": "1.0"
+  },
+  "servers": {
+    "managed": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@test/managed"]
+    }
+  }
+}"""
+        config_file = tmp_path / "config.json"
         config_file.write_text(config_content)
 
         # Mock platform with existing orphan
@@ -299,7 +312,7 @@ args = ["-y", "@test/managed"]
 
         claude_config = tmp_path / ".claude.json"
         claude_config.write_text('{"mcpServers": {}}')  # Create the file
-        orphan = MCPServer(name="orphan", command="python", args=["-m", "orphan"])
+        orphan = MCPServer(name="orphan", type="stdio", command="python", args=["-m", "orphan"])
 
         platform = MockPlatform(claude_config, {"orphan": orphan})
 

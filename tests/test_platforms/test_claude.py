@@ -72,6 +72,7 @@ def test_claude_save_creates_file(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/projects"],
         ),
@@ -105,6 +106,7 @@ def test_claude_save_replaces_all(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem"],
         ),
@@ -138,6 +140,7 @@ def test_claude_save_updates_existing(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="new-command",
             args=["--new"],
         ),
@@ -160,12 +163,14 @@ def test_claude_roundtrip(tmp_path: Path) -> None:
     original_servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem", "/projects"],
             env={"DEBUG": "1"},
         ),
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_xxxx"},
@@ -217,6 +222,7 @@ def test_claude_json_format(tmp_path: Path) -> None:
     servers = {
         "github": MCPServer(
             name="github",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-github"],
             env={"GITHUB_TOKEN": "ghp_xxxx"},
@@ -244,6 +250,7 @@ def test_claude_empty_env_not_written(tmp_path: Path) -> None:
     servers = {
         "filesystem": MCPServer(
             name="filesystem",
+            type="stdio",
             command="npx",
             args=["-y", "@modelcontextprotocol/server-filesystem"],
             env={},  # Empty env

@@ -38,6 +38,7 @@ class TestValidateServer:
         """Test that server with valid command passes validation."""
         server = MCPServer(
             name="test-server",
+            type="stdio",
             command="python",
             args=["-m", "module"]
         )
@@ -48,6 +49,7 @@ class TestValidateServer:
         """Test that server with missing command fails validation."""
         server = MCPServer(
             name="broken-server",
+            type="stdio",
             command="nonexistent_command_xyz"
         )
         errors = validate_server(server)
@@ -65,6 +67,7 @@ class TestValidateServer:
 
         server = MCPServer(
             name="test-server",
+            type="stdio",
             command="python",
             args=["${MCPX_TEST_UNSET_VAR}/script.py"]
         )
@@ -81,6 +84,7 @@ class TestValidateServer:
 
         server = MCPServer(
             name="test-server",
+            type="stdio",
             command="python",
             args=["${MCPX_TEST_SET_VAR}/script.py"]
         )
@@ -99,6 +103,7 @@ class TestValidateServer:
 
         server = MCPServer(
             name="test-server",
+            type="stdio",
             command="python",
             env={"API_KEY": "${MCPX_TEST_DICT_VAR}"}
         )
@@ -118,6 +123,7 @@ class TestValidateServer:
 
         server = MCPServer(
             name="test-server",
+            type="stdio",
             command="python",
             args=["${MCPX_TEST_VAR1}", "${MCPX_TEST_VAR2}"]
         )
@@ -133,6 +139,7 @@ class TestValidateServer:
 
         server = MCPServer(
             name="valid-server",
+            type="stdio",
             command="python",
             args=["-m", "module", "${MCPX_TEST_VALID_VAR}"],
             env={"TEST": "value"}
