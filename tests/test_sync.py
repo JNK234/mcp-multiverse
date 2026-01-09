@@ -1,4 +1,6 @@
-# Tests for sync orchestration
+# ABOUTME: Tests for sync orchestration
+# ABOUTME: Includes both unit tests with mocks and integration tests with real adapters
+import json
 from pathlib import Path
 
 from mcpx.models import MCPServer
@@ -331,3 +333,180 @@ class TestSyncAll:
         assert "managed" in platform._saved
         assert "orphan" in platform._saved
         assert len(platform._saved) == 2
+
+
+# =============================================================================
+# Integration Tests - Real platform adapters
+# =============================================================================
+
+
+class TestIntegrationSyncWithRealAdapters:
+    """Integration tests that use real platform adapters instead of mocks."""
+
+    def test_integration_full_sync_flow_with_claude_adapter(self, tmp_path: Path):
+        """Test the full sync flow: config file -> load -> sync to Claude adapter -> verify output.
+
+        This test uses the real ClaudeAdapter with a temporary config file path.
+        """
+        from mcpx.config import load_config, save_config
+        from mcpx.models import Config
+        from mcpx.platforms.claude import ClaudeAdapter
+        from mcpx.sync import merge_servers
+
+        # Step 1: Create mcpx config file with servers
+        config_file = tmp_path / "config.json"
+        config = Config(
+            version="1.0",
+            servers={
+                "filesystem": MCPServer(
+                    name="filesystem",
+                    type="stdio",
+                    command="echo",  # Using echo as it exists on all systems
+                    args=["filesystem-server"]
+                ),
+                "github": MCPServer(
+                    name="github",
+                    type="stdio",
+                    command="echo",
+                    args=["github-server"],
+                    env={"GITHUB_TOKEN": "test-token"}
+                )
+            }
+        )
+        save_config(config_file, config)
+
+        # Step 2: Verify config was saved correctly
+        assert config_file.exists()
+        loaded_config = load_config(config_file)
+        assert len(loaded_config.servers) == 2
+        assert "filesystem" in loaded_config.servers
+        assert "github" in loaded_config.servers
+
+        # Step 3: Create Claude adapter with temp path
+        claude_config_path = tmp_path / ".claude.json"
+        adapter = ClaudeAdapter(config_path=claude_config_path)
+
+        # Step 4: Verify adapter properties
+        assert adapter.name == "Claude Code"
+        assert adapter.config_path is None  # File doesn't exist yet
+
+        # Step 5: Load existing servers (should be empty)
+        existing = adapter.load()
+        assert existing == {}
+
+        # Step 6: Merge and save servers
+        merged = merge_servers(loaded_config.servers, existing)
+        adapter.save(merged)
+
+        # Step 7: Verify output file exists and contains correct data
+        assert claude_config_path.exists()
+        output_data = json.loads(claude_config_path.read_text())
+
+        assert "mcpServers" in output_data
+        assert "filesystem" in output_data["mcpServers"]
+        assert "github" in output_data["mcpServers"]
+
+        # Verify filesystem server details
+        fs_server = output_data["mcpServers"]["filesystem"]
+        assert fs_server["command"] == "echo"
+        assert fs_server["args"] == ["filesystem-server"]
+
+        # Verify github server details with env
+        gh_server = output_data["mcpServers"]["github"]
+        assert gh_server["command"] == "echo"
+        assert gh_server["args"] == ["github-server"]
+        assert gh_server["env"] == {"GITHUB_TOKEN": "test-token"}
+
+        # Step 8: Reload and verify roundtrip
+        reloaded = adapter.load()
+        assert len(reloaded) == 2
+        assert reloaded["filesystem"].command == "echo"
+        assert reloaded["github"].env == {"GITHUB_TOKEN": "test-token"}
+
+    def test_integration_sync_preserves_existing_servers(self, tmp_path: Path):
+        """Test that syncing preserves servers that exist in the platform config but not in mcpx."""
+        from mcpx.config import load_config, save_config
+        from mcpx.models import Config
+        from mcpx.platforms.claude import ClaudeAdapter
+        from mcpx.sync import merge_servers
+
+        # Step 1: Create initial Claude config with an "orphan" server
+        claude_config_path = tmp_path / ".claude.json"
+        initial_claude_config = {
+            "mcpServers": {
+                "orphan-server": {
+                    "command": "node",
+                    "args": ["orphan.js"]
+                }
+            }
+        }
+        claude_config_path.write_text(json.dumps(initial_claude_config, indent=2))
+
+        # Step 2: Create mcpx config with a different server
+        config_file = tmp_path / "config.json"
+        config = Config(
+            version="1.0",
+            servers={
+                "managed-server": MCPServer(
+                    name="managed-server",
+                    type="stdio",
+                    command="echo",
+                    args=["managed"]
+                )
+            }
+        )
+        save_config(config_file, config)
+
+        # Step 3: Load, merge, and save
+        loaded_config = load_config(config_file)
+        adapter = ClaudeAdapter(config_path=claude_config_path)
+        existing = adapter.load()
+
+        # Verify orphan exists before merge
+        assert "orphan-server" in existing
+
+        merged = merge_servers(loaded_config.servers, existing)
+        adapter.save(merged)
+
+        # Step 4: Verify both servers exist after sync
+        final_data = json.loads(claude_config_path.read_text())
+        assert "mcpServers" in final_data
+        assert "orphan-server" in final_data["mcpServers"]
+        assert "managed-server" in final_data["mcpServers"]
+
+    def test_integration_sync_http_server(self, tmp_path: Path):
+        """Test syncing an HTTP type server."""
+        from mcpx.config import save_config, load_config
+        from mcpx.models import Config
+        from mcpx.platforms.claude import ClaudeAdapter
+        from mcpx.sync import merge_servers
+
+        # Create config with HTTP server
+        config_file = tmp_path / "config.json"
+        config = Config(
+            version="1.0",
+            servers={
+                "api-server": MCPServer(
+                    name="api-server",
+                    type="http",
+                    url="https://api.example.com/mcp",
+                    headers={"Authorization": "Bearer ${API_TOKEN}"}
+                )
+            }
+        )
+        save_config(config_file, config)
+
+        # Load and sync
+        loaded_config = load_config(config_file)
+        claude_config_path = tmp_path / ".claude.json"
+        adapter = ClaudeAdapter(config_path=claude_config_path)
+
+        merged = merge_servers(loaded_config.servers, adapter.load())
+        adapter.save(merged)
+
+        # Verify HTTP server was saved correctly
+        output_data = json.loads(claude_config_path.read_text())
+        assert "api-server" in output_data["mcpServers"]
+        api_server = output_data["mcpServers"]["api-server"]
+        assert api_server["url"] == "https://api.example.com/mcp"
+        assert api_server["headers"] == {"Authorization": "Bearer ${API_TOKEN}"}

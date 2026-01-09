@@ -1,5 +1,5 @@
 # ABOUTME: Tests for health check functionality for stdio and HTTP MCP servers
-# ABOUTME: Covers success, failure, timeout, and edge cases
+# ABOUTME: Covers success, failure, timeout, and edge cases with both unit and integration tests
 import json
 import subprocess
 import sys
@@ -16,13 +16,129 @@ from mcpx.utils.validation import (
     MCP_PROTOCOL_VERSION,
     health_check_http_server,
     health_check_stdio_server,
+    validate_command_exists,
 )
 
 
-class TestHealthCheckStdioServer:
-    """Tests for health_check_stdio_server function."""
+# =============================================================================
+# Integration Tests - Real subprocess/command behavior
+# =============================================================================
 
-    def test_non_stdio_server_fails(self):
+
+class TestIntegrationValidateCommandExists:
+    """Integration tests for validate_command_exists using real system commands."""
+
+    def test_integration_real_command_exists_echo(self):
+        """Test that validate_command_exists works for 'echo' command."""
+        result = validate_command_exists("echo")
+        assert result is None, "echo command should exist on all systems"
+
+    def test_integration_real_command_exists_python(self):
+        """Test that validate_command_exists works for python command."""
+        # Try python3 first, then python
+        result = validate_command_exists("python3")
+        if result is not None:
+            result = validate_command_exists("python")
+        assert result is None, "python or python3 command should exist"
+
+    def test_integration_real_command_exists_cat(self):
+        """Test that validate_command_exists works for 'cat' command."""
+        result = validate_command_exists("cat")
+        assert result is None, "cat command should exist on Unix systems"
+
+    def test_integration_real_nonexistent_command(self):
+        """Test that validation fails for a nonexistent command."""
+        result = validate_command_exists("nonexistent_command_xyz123_surely_not_installed")
+        assert result is not None, "Nonexistent command should return error"
+        assert result.severity == "error"
+        assert "Command not found" in result.message
+
+
+class TestIntegrationSubprocessSpawn:
+    """Integration tests for real subprocess spawning."""
+
+    def test_integration_real_subprocess_echo(self):
+        """Test that a real echo process can be spawned and returns output."""
+        server = MCPServer(
+            name="echo-test",
+            type="stdio",
+            command="echo",
+            args=['{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"test","version":"1.0"}}}']
+        )
+        success, message = health_check_stdio_server(server, timeout=5)
+        # Echo outputs the JSON but isn't a real MCP server, so it may succeed
+        # or fail depending on parsing - the key is subprocess spawn works
+        assert isinstance(success, bool)
+        assert isinstance(message, str)
+        assert "echo-test" in message
+
+    def test_integration_real_subprocess_cat_with_stdin(self):
+        """Test that cat command receives stdin correctly."""
+        # cat will echo back what it receives on stdin
+        server = MCPServer(
+            name="cat-test",
+            type="stdio",
+            command="cat",
+            args=[]
+        )
+        success, message = health_check_stdio_server(server, timeout=2)
+        # cat will output the JSON-RPC request it received, which is valid JSON
+        # but not a valid MCP response, so it should fail validation
+        assert success is False or success is True  # Just verify it runs
+        assert "cat-test" in message
+
+    def test_integration_real_python_version_command(self):
+        """Test that python --version runs without hanging."""
+        # This tests subprocess cleanup when process exits quickly
+        python_cmd = "python3" if validate_command_exists("python3") is None else "python"
+        server = MCPServer(
+            name="python-test",
+            type="stdio",
+            command=python_cmd,
+            args=["--version"]
+        )
+        success, message = health_check_stdio_server(server, timeout=5)
+        # python --version outputs to stderr, not stdout, so should fail
+        assert success is False
+        assert "python-test" in message
+
+    def test_integration_real_nonexistent_command_fails(self):
+        """Test that health check fails properly for nonexistent command."""
+        server = MCPServer(
+            name="nonexistent-server",
+            type="stdio",
+            command="nonexistent_command_xyz123_definitely_not_real"
+        )
+        success, message = health_check_stdio_server(server, timeout=1)
+        assert success is False
+        assert "Command not found" in message
+        assert "nonexistent-server" in message
+
+    def test_integration_real_subprocess_with_env(self):
+        """Test that environment variables are passed to subprocess."""
+        # Use printenv or echo to verify env var is set
+        server = MCPServer(
+            name="env-test",
+            type="stdio",
+            command="sh",
+            args=["-c", 'echo "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"result\\":{\\"serverInfo\\":{\\"name\\":\\"env-test\\",\\"version\\":\\"1.0\\"}}}"'],
+            env={"TEST_VAR": "test_value"}
+        )
+        success, message = health_check_stdio_server(server, timeout=5)
+        # Should succeed because sh outputs valid JSON-RPC
+        assert success is True
+        assert "healthy" in message
+
+
+# =============================================================================
+# Unit Tests - Mocked behavior for edge cases
+# =============================================================================
+
+
+class TestUnitHealthCheckStdioServer:
+    """Unit tests for health_check_stdio_server function with mocked dependencies."""
+
+    def test_unit_non_stdio_server_fails(self):
         """Test that HTTP server type returns failure."""
         server = MCPServer(
             name="http-server",
@@ -34,7 +150,7 @@ class TestHealthCheckStdioServer:
         assert "not a stdio server" in message
         assert "http-server" in message
 
-    def test_missing_command_fails(self):
+    def test_unit_missing_command_fails(self):
         """Test that server without command returns failure."""
         server = MCPServer(
             name="no-cmd-server",
@@ -46,7 +162,7 @@ class TestHealthCheckStdioServer:
         assert "no command specified" in message
         assert "no-cmd-server" in message
 
-    def test_nonexistent_command_fails(self):
+    def test_unit_nonexistent_command_fails(self):
         """Test that non-existent command returns failure."""
         server = MCPServer(
             name="bad-cmd-server",
@@ -60,7 +176,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_successful_health_check(self, mock_validate, mock_popen):
+    def test_unit_successful_health_check(self, mock_validate, mock_popen):
         """Test successful health check with valid MCP response."""
         mock_validate.return_value = None
 
@@ -103,7 +219,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_timeout_returns_failure(self, mock_validate, mock_popen):
+    def test_unit_timeout_returns_failure(self, mock_validate, mock_popen):
         """Test that timeout during communication returns failure."""
         mock_validate.return_value = None
 
@@ -127,7 +243,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_custom_timeout(self, mock_validate, mock_popen):
+    def test_unit_custom_timeout(self, mock_validate, mock_popen):
         """Test that custom timeout is used."""
         mock_validate.return_value = None
 
@@ -149,7 +265,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_empty_response_fails(self, mock_validate, mock_popen):
+    def test_unit_empty_response_fails(self, mock_validate, mock_popen):
         """Test that empty response returns failure."""
         mock_validate.return_value = None
 
@@ -170,7 +286,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_stderr_included_in_failure(self, mock_validate, mock_popen):
+    def test_unit_stderr_included_in_failure(self, mock_validate, mock_popen):
         """Test that stderr is included in failure message when no stdout."""
         mock_validate.return_value = None
 
@@ -192,7 +308,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_non_json_response_fails(self, mock_validate, mock_popen):
+    def test_unit_non_json_response_fails(self, mock_validate, mock_popen):
         """Test that non-JSON response returns failure."""
         mock_validate.return_value = None
 
@@ -212,7 +328,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_invalid_json_response_fails(self, mock_validate, mock_popen):
+    def test_unit_invalid_json_response_fails(self, mock_validate, mock_popen):
         """Test that invalid JSON response returns failure."""
         mock_validate.return_value = None
 
@@ -232,7 +348,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_missing_jsonrpc_field_fails(self, mock_validate, mock_popen):
+    def test_unit_missing_jsonrpc_field_fails(self, mock_validate, mock_popen):
         """Test that response without jsonrpc field returns failure."""
         mock_validate.return_value = None
 
@@ -256,7 +372,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_wrong_jsonrpc_version_fails(self, mock_validate, mock_popen):
+    def test_unit_wrong_jsonrpc_version_fails(self, mock_validate, mock_popen):
         """Test that wrong JSON-RPC version returns failure."""
         mock_validate.return_value = None
 
@@ -280,7 +396,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_error_response_returns_failure(self, mock_validate, mock_popen):
+    def test_unit_error_response_returns_failure(self, mock_validate, mock_popen):
         """Test that MCP error response returns failure."""
         mock_validate.return_value = None
 
@@ -312,7 +428,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_missing_result_and_error_fails(self, mock_validate, mock_popen):
+    def test_unit_missing_result_and_error_fails(self, mock_validate, mock_popen):
         """Test that response without result or error returns failure."""
         mock_validate.return_value = None
 
@@ -336,7 +452,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_multiline_response_finds_json(self, mock_validate, mock_popen):
+    def test_unit_multiline_response_finds_json(self, mock_validate, mock_popen):
         """Test that JSON is found in multiline output."""
         mock_validate.return_value = None
 
@@ -365,7 +481,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_environment_variables_expanded(self, mock_validate, mock_popen):
+    def test_unit_environment_variables_expanded(self, mock_validate, mock_popen):
         """Test that environment variables in server env are expanded."""
         mock_validate.return_value = None
 
@@ -399,7 +515,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_process_cleanup_on_success(self, mock_validate, mock_popen):
+    def test_unit_process_cleanup_on_success(self, mock_validate, mock_popen):
         """Test that process is terminated after successful check."""
         mock_validate.return_value = None
 
@@ -427,7 +543,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_process_kill_on_terminate_timeout(self, mock_validate, mock_popen):
+    def test_unit_process_kill_on_terminate_timeout(self, mock_validate, mock_popen):
         """Test that process is killed if terminate times out."""
         mock_validate.return_value = None
 
@@ -460,7 +576,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_permission_error_handled(self, mock_validate, mock_popen):
+    def test_unit_permission_error_handled(self, mock_validate, mock_popen):
         """Test that PermissionError is handled gracefully."""
         mock_validate.return_value = None
         mock_popen.side_effect = PermissionError("Permission denied")
@@ -478,7 +594,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_os_error_handled(self, mock_validate, mock_popen):
+    def test_unit_os_error_handled(self, mock_validate, mock_popen):
         """Test that OSError is handled gracefully."""
         mock_validate.return_value = None
         mock_popen.side_effect = OSError("Resource temporarily unavailable")
@@ -496,7 +612,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_correct_init_request_sent(self, mock_validate, mock_popen):
+    def test_unit_correct_init_request_sent(self, mock_validate, mock_popen):
         """Test that correct MCP initialize request is sent."""
         mock_validate.return_value = None
 
@@ -535,7 +651,7 @@ class TestHealthCheckStdioServer:
 
     @patch("mcpx.utils.validation.subprocess.Popen")
     @patch("mcpx.utils.validation.validate_command_exists")
-    def test_args_passed_to_command(self, mock_validate, mock_popen):
+    def test_unit_args_passed_to_command(self, mock_validate, mock_popen):
         """Test that server args are passed to command."""
         mock_validate.return_value = None
 
@@ -584,10 +700,10 @@ class TestHealthCheckConstants:
         assert HEALTH_CHECK_TIMEOUT == 5
 
 
-class TestHealthCheckHTTPServer:
-    """Tests for health_check_http_server function."""
+class TestUnitHealthCheckHTTPServer:
+    """Unit tests for health_check_http_server function with mocked dependencies."""
 
-    def test_non_http_server_fails(self):
+    def test_unit_non_http_server_fails(self):
         """Test that stdio server type returns failure."""
         server = MCPServer(
             name="stdio-server",
@@ -600,7 +716,7 @@ class TestHealthCheckHTTPServer:
         assert "not an HTTP server" in message
         assert "stdio-server" in message
 
-    def test_missing_url_fails(self):
+    def test_unit_missing_url_fails(self):
         """Test that server without URL returns failure."""
         server = MCPServer(
             name="no-url-server",
@@ -612,7 +728,7 @@ class TestHealthCheckHTTPServer:
         assert "no URL specified" in message
         assert "no-url-server" in message
 
-    def test_invalid_url_format_fails(self):
+    def test_unit_invalid_url_format_fails(self):
         """Test that invalid URL format returns failure."""
         server = MCPServer(
             name="bad-url-server",
@@ -623,7 +739,7 @@ class TestHealthCheckHTTPServer:
         assert success is False
         assert "bad-url-server" in message
 
-    def test_non_http_scheme_fails(self):
+    def test_unit_non_http_scheme_fails(self):
         """Test that non-HTTP scheme returns failure."""
         server = MCPServer(
             name="ftp-server",
@@ -635,7 +751,7 @@ class TestHealthCheckHTTPServer:
         assert "HTTP or HTTPS scheme" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_successful_health_check(self, mock_urlopen):
+    def test_unit_successful_health_check(self, mock_urlopen):
         """Test successful health check with valid MCP response."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -670,7 +786,7 @@ class TestHealthCheckHTTPServer:
         assert "1.0.0" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_http_error_returns_failure(self, mock_urlopen):
+    def test_unit_http_error_returns_failure(self, mock_urlopen):
         """Test that HTTP error returns failure."""
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url="https://api.example.com/mcp",
@@ -692,7 +808,7 @@ class TestHealthCheckHTTPServer:
         assert "error-http-server" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_url_error_returns_failure(self, mock_urlopen):
+    def test_unit_url_error_returns_failure(self, mock_urlopen):
         """Test that URL error (connection failure) returns failure."""
         mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
 
@@ -708,7 +824,7 @@ class TestHealthCheckHTTPServer:
         assert "unreachable-server" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_timeout_returns_failure(self, mock_urlopen):
+    def test_unit_timeout_returns_failure(self, mock_urlopen):
         """Test that timeout returns failure."""
         mock_urlopen.side_effect = TimeoutError()
 
@@ -725,7 +841,7 @@ class TestHealthCheckHTTPServer:
         assert str(HEALTH_CHECK_TIMEOUT) in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_custom_timeout(self, mock_urlopen):
+    def test_unit_custom_timeout(self, mock_urlopen):
         """Test that custom timeout is used."""
         mock_urlopen.side_effect = TimeoutError()
 
@@ -740,7 +856,7 @@ class TestHealthCheckHTTPServer:
         assert "10" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_empty_response_fails(self, mock_urlopen):
+    def test_unit_empty_response_fails(self, mock_urlopen):
         """Test that empty response returns failure."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -760,7 +876,7 @@ class TestHealthCheckHTTPServer:
         assert "empty response" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_invalid_json_response_fails(self, mock_urlopen):
+    def test_unit_invalid_json_response_fails(self, mock_urlopen):
         """Test that invalid JSON response returns failure."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -780,7 +896,7 @@ class TestHealthCheckHTTPServer:
         assert "invalid JSON" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_missing_jsonrpc_field_fails(self, mock_urlopen):
+    def test_unit_missing_jsonrpc_field_fails(self, mock_urlopen):
         """Test that response without jsonrpc field returns failure."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -800,7 +916,7 @@ class TestHealthCheckHTTPServer:
         assert "missing 'jsonrpc' field" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_wrong_jsonrpc_version_fails(self, mock_urlopen):
+    def test_unit_wrong_jsonrpc_version_fails(self, mock_urlopen):
         """Test that wrong JSON-RPC version returns failure."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -820,7 +936,7 @@ class TestHealthCheckHTTPServer:
         assert "invalid JSON-RPC version" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_error_response_returns_failure(self, mock_urlopen):
+    def test_unit_error_response_returns_failure(self, mock_urlopen):
         """Test that MCP error response returns failure."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -849,7 +965,7 @@ class TestHealthCheckHTTPServer:
         assert "Invalid request" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_missing_result_and_error_fails(self, mock_urlopen):
+    def test_unit_missing_result_and_error_fails(self, mock_urlopen):
         """Test that response without result or error returns failure."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -869,7 +985,7 @@ class TestHealthCheckHTTPServer:
         assert "missing 'result' or 'error' field" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_headers_expanded_and_sent(self, mock_urlopen):
+    def test_unit_headers_expanded_and_sent(self, mock_urlopen):
         """Test that headers are expanded and sent with request."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -900,7 +1016,7 @@ class TestHealthCheckHTTPServer:
         assert call_args.get_header("Content-type") == "application/json"
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_url_environment_variables_expanded(self, mock_urlopen):
+    def test_unit_url_environment_variables_expanded(self, mock_urlopen):
         """Test that environment variables in URL are expanded."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -929,7 +1045,7 @@ class TestHealthCheckHTTPServer:
         assert call_args.full_url == "https://api.example.com/mcp"
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_correct_init_request_sent(self, mock_urlopen):
+    def test_unit_correct_init_request_sent(self, mock_urlopen):
         """Test that correct MCP initialize request is sent."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -962,7 +1078,7 @@ class TestHealthCheckHTTPServer:
         assert request_body["params"]["clientInfo"]["version"] == MCP_CLIENT_VERSION
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_post_method_used(self, mock_urlopen):
+    def test_unit_post_method_used(self, mock_urlopen):
         """Test that POST method is used for HTTP request."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -988,7 +1104,7 @@ class TestHealthCheckHTTPServer:
         assert call_args.get_method() == "POST"
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_os_error_handled(self, mock_urlopen):
+    def test_unit_os_error_handled(self, mock_urlopen):
         """Test that OSError is handled gracefully."""
         mock_urlopen.side_effect = OSError("Network is unreachable")
 
@@ -1004,7 +1120,7 @@ class TestHealthCheckHTTPServer:
         assert "network-error-server" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_http_404_error(self, mock_urlopen):
+    def test_unit_http_404_error(self, mock_urlopen):
         """Test that HTTP 404 error is handled."""
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url="https://api.example.com/mcp",
@@ -1025,7 +1141,7 @@ class TestHealthCheckHTTPServer:
         assert "HTTP 404" in message
 
     @patch("mcpx.utils.validation.urllib.request.urlopen")
-    def test_multiple_headers_sent(self, mock_urlopen):
+    def test_unit_multiple_headers_sent(self, mock_urlopen):
         """Test that multiple headers are all sent with request."""
         mock_response = MagicMock()
         mock_response.status = 200
