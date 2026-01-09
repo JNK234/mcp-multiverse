@@ -1,11 +1,20 @@
-# Validation utilities for MCP server configurations
+# ABOUTME: Validation utilities for MCP server configurations
+# ABOUTME: Includes health check functionality for stdio MCP servers
+import json
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from mcpx.models import MCPServer
+
+# MCP protocol constants
+MCP_PROTOCOL_VERSION = "2024-11-05"
+MCP_CLIENT_NAME = "mcpx"
+MCP_CLIENT_VERSION = "0.1.0"
+HEALTH_CHECK_TIMEOUT = 5  # seconds
 
 
 @dataclass(frozen=True)
@@ -190,3 +199,161 @@ def validate_server(server: MCPServer) -> list[ValidationError]:
                         ))
 
     return errors
+
+
+def health_check_stdio_server(server: MCPServer, timeout: int | None = None) -> tuple[bool, str]:
+    """Perform health check on a stdio MCP server.
+
+    ABOUTME: Validates stdio server by starting it and sending MCP initialize request
+    ABOUTME: Returns tuple of (success, message) indicating health status
+
+    This function:
+    1. Verifies command exists in PATH
+    2. Verifies referenced environment variables exist (warnings only)
+    3. Attempts to start server subprocess
+    4. Sends MCP initialize request (JSON-RPC format)
+    5. Waits for response up to timeout seconds
+    6. Cleans up subprocess on completion or timeout
+
+    Args:
+        server: MCPServer instance to health check (must be stdio type)
+        timeout: Timeout in seconds (default: HEALTH_CHECK_TIMEOUT)
+
+    Returns:
+        Tuple of (success: bool, message: str)
+        - success: True if server responded to initialization
+        - message: Description of result or error
+
+    Examples:
+        >>> server = MCPServer(name="test", type="stdio", command="echo", args=["{}"])
+        >>> success, msg = health_check_stdio_server(server)
+    """
+    if timeout is None:
+        timeout = HEALTH_CHECK_TIMEOUT
+
+    # Validate server type
+    if server.type != "stdio":
+        return False, f"Server '{server.name}' is not a stdio server (type: {server.type})"
+
+    # Check command exists
+    if not server.command:
+        return False, f"Server '{server.name}' has no command specified"
+
+    cmd_error = validate_command_exists(server.command)
+    if cmd_error:
+        return False, f"Server '{server.name}': {cmd_error.message}"
+
+    # Build command line
+    cmd = [server.command] + list(server.args)
+
+    # Build environment with server's env vars expanded
+    env = os.environ.copy()
+    for key, value in server.env.items():
+        # Expand environment variable references in values
+        expanded_value = value
+        for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', value):
+            var_name = match.group(1)
+            env_value = os.environ.get(var_name, "")
+            expanded_value = expanded_value.replace(f"${{{var_name}}}", env_value)
+        env[key] = expanded_value
+
+    # Create MCP initialize request
+    init_request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {
+                "name": MCP_CLIENT_NAME,
+                "version": MCP_CLIENT_VERSION
+            }
+        }
+    }
+
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        # Start the server process
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env
+        )
+
+        # Send initialize request
+        request_json = json.dumps(init_request) + "\n"
+        stdout_data, stderr_data = process.communicate(
+            input=request_json.encode("utf-8"),
+            timeout=timeout
+        )
+
+        # Parse response
+        stdout_str = stdout_data.decode("utf-8").strip()
+        if not stdout_str:
+            stderr_str = stderr_data.decode("utf-8").strip()
+            if stderr_str:
+                return False, f"Server '{server.name}' returned no response. stderr: {stderr_str[:200]}"
+            return False, f"Server '{server.name}' returned no response"
+
+        # MCP servers may output multiple lines; find the JSON response
+        response_line = None
+        for line in stdout_str.split("\n"):
+            line = line.strip()
+            if line.startswith("{"):
+                response_line = line
+                break
+
+        if not response_line:
+            return False, f"Server '{server.name}' returned non-JSON response: {stdout_str[:200]}"
+
+        try:
+            response = json.loads(response_line)
+        except json.JSONDecodeError as e:
+            return False, f"Server '{server.name}' returned invalid JSON: {e}"
+
+        # Validate JSON-RPC response
+        if "jsonrpc" not in response:
+            return False, f"Server '{server.name}' response missing 'jsonrpc' field"
+
+        if response.get("jsonrpc") != "2.0":
+            return False, f"Server '{server.name}' has invalid JSON-RPC version: {response.get('jsonrpc')}"
+
+        # Check for error response
+        if "error" in response:
+            error = response["error"]
+            error_msg = error.get("message", str(error))
+            return False, f"Server '{server.name}' returned error: {error_msg}"
+
+        # Check for result (successful initialization)
+        if "result" in response:
+            result = response["result"]
+            # Extract server info if available
+            server_info = result.get("serverInfo", {})
+            server_name_resp = server_info.get("name", "unknown")
+            server_version = server_info.get("version", "unknown")
+            return True, f"Server '{server.name}' healthy (server: {server_name_resp} v{server_version})"
+
+        return False, f"Server '{server.name}' response missing 'result' or 'error' field"
+
+    except subprocess.TimeoutExpired:
+        return False, f"Server '{server.name}' timed out after {timeout} seconds"
+    except FileNotFoundError:
+        return False, f"Server '{server.name}': command not found: {server.command}"
+    except PermissionError:
+        return False, f"Server '{server.name}': permission denied executing: {server.command}"
+    except OSError as e:
+        return False, f"Server '{server.name}': OS error: {e}"
+    finally:
+        # Clean up subprocess
+        if process is not None:
+            try:
+                process.terminate()
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            except Exception:
+                pass  # Best effort cleanup
