@@ -1,0 +1,16 @@
+# Test fixture: Valid mcpx configuration
+[mcpx]
+version = "1.0"
+
+[servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/projects"]
+
+[servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_PERSONAL_ACCESS_TOKEN = "${GITHUB_TOKEN}" }
+
+[servers.memory]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-memory"]

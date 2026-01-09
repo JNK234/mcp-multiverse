@@ -1,0 +1,6 @@
+# Test fixture: Minimal valid configuration
+[mcpx]
+version = "1.0"
+
+[servers.test]
+command = "echo"

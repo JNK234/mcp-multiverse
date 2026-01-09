@@ -1,0 +1,7 @@
+# Test fixture: Invalid TOML syntax
+[mcpx
+version = "1.0"
+
+[servers.filesystem]
+command = "npx"
+# Missing closing bracket above causes parse error
