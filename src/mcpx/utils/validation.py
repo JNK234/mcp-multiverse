@@ -5,6 +5,8 @@ import os
 import re
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -357,3 +359,140 @@ def health_check_stdio_server(server: MCPServer, timeout: int | None = None) -> 
                 process.wait()
             except Exception:
                 pass  # Best effort cleanup
+
+
+def health_check_http_server(server: MCPServer, timeout: int | None = None) -> tuple[bool, str]:
+    """Perform health check on an HTTP MCP server.
+
+    ABOUTME: Validates HTTP server by sending MCP initialize request via POST
+    ABOUTME: Returns tuple of (success, message) indicating health status
+
+    This function:
+    1. Validates server type is HTTP
+    2. Verifies URL format is valid
+    3. Expands environment variables in headers
+    4. Sends HTTP POST with MCP initialize request (JSON-RPC format)
+    5. Validates response is 2xx with valid JSON-RPC
+
+    Args:
+        server: MCPServer instance to health check (must be http type)
+        timeout: Timeout in seconds (default: HEALTH_CHECK_TIMEOUT)
+
+    Returns:
+        Tuple of (success: bool, message: str)
+        - success: True if server responded with 2xx and valid JSON-RPC
+        - message: Description of result or error
+
+    Examples:
+        >>> server = MCPServer(name="test", type="http", url="https://api.example.com/mcp")
+        >>> success, msg = health_check_http_server(server)
+    """
+    if timeout is None:
+        timeout = HEALTH_CHECK_TIMEOUT
+
+    # Validate server type
+    if server.type != "http":
+        return False, f"Server '{server.name}' is not an HTTP server (type: {server.type})"
+
+    # Check URL exists
+    if not server.url:
+        return False, f"Server '{server.name}' has no URL specified"
+
+    # Validate URL format
+    url_error = validate_url(server.url)
+    if url_error:
+        return False, f"Server '{server.name}': {url_error.message}"
+
+    # Expand environment variables in URL
+    expanded_url = server.url
+    for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', server.url):
+        var_name = match.group(1)
+        env_value = os.environ.get(var_name, "")
+        expanded_url = expanded_url.replace(f"${{{var_name}}}", env_value)
+
+    # Build headers with environment variable expansion
+    headers = {"Content-Type": "application/json"}
+    for key, value in server.headers.items():
+        expanded_value = value
+        for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', value):
+            var_name = match.group(1)
+            env_value = os.environ.get(var_name, "")
+            expanded_value = expanded_value.replace(f"${{{var_name}}}", env_value)
+        headers[key] = expanded_value
+
+    # Create MCP initialize request
+    init_request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {
+                "name": MCP_CLIENT_NAME,
+                "version": MCP_CLIENT_VERSION
+            }
+        }
+    }
+
+    try:
+        # Build HTTP request
+        request_body = json.dumps(init_request).encode("utf-8")
+        req = urllib.request.Request(
+            expanded_url,
+            data=request_body,
+            headers=headers,
+            method="POST"
+        )
+
+        # Send request with timeout
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            # Check for 2xx status code
+            status_code = response.status
+            if status_code < 200 or status_code >= 300:
+                return False, f"Server '{server.name}' returned HTTP {status_code}"
+
+            # Read and parse response
+            response_body = response.read().decode("utf-8").strip()
+            if not response_body:
+                return False, f"Server '{server.name}' returned empty response"
+
+            try:
+                response_json = json.loads(response_body)
+            except json.JSONDecodeError as e:
+                return False, f"Server '{server.name}' returned invalid JSON: {e}"
+
+            # Validate JSON-RPC response
+            if "jsonrpc" not in response_json:
+                return False, f"Server '{server.name}' response missing 'jsonrpc' field"
+
+            if response_json.get("jsonrpc") != "2.0":
+                return False, f"Server '{server.name}' has invalid JSON-RPC version: {response_json.get('jsonrpc')}"
+
+            # Check for error response
+            if "error" in response_json:
+                error = response_json["error"]
+                error_msg = error.get("message", str(error))
+                return False, f"Server '{server.name}' returned error: {error_msg}"
+
+            # Check for result (successful initialization)
+            if "result" in response_json:
+                result = response_json["result"]
+                server_info = result.get("serverInfo", {})
+                server_name_resp = server_info.get("name", "unknown")
+                server_version = server_info.get("version", "unknown")
+                return True, f"Server '{server.name}' healthy (server: {server_name_resp} v{server_version})"
+
+            return False, f"Server '{server.name}' response missing 'result' or 'error' field"
+
+    except urllib.error.HTTPError as e:
+        return False, f"Server '{server.name}' returned HTTP {e.code}: {e.reason}"
+    except urllib.error.URLError as e:
+        reason = str(e.reason) if e.reason else "Unknown error"
+        return False, f"Server '{server.name}' connection failed: {reason}"
+    except TimeoutError:
+        return False, f"Server '{server.name}' timed out after {timeout} seconds"
+    except OSError as e:
+        return False, f"Server '{server.name}' network error: {e}"
+    except Exception as e:
+        return False, f"Server '{server.name}' unexpected error: {e}"

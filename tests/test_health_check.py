@@ -1,8 +1,9 @@
-# ABOUTME: Tests for health check functionality for stdio MCP servers
+# ABOUTME: Tests for health check functionality for stdio and HTTP MCP servers
 # ABOUTME: Covers success, failure, timeout, and edge cases
 import json
 import subprocess
 import sys
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from mcpx.utils.validation import (
     MCP_CLIENT_NAME,
     MCP_CLIENT_VERSION,
     MCP_PROTOCOL_VERSION,
+    health_check_http_server,
     health_check_stdio_server,
 )
 
@@ -580,3 +582,476 @@ class TestHealthCheckConstants:
     def test_default_timeout(self):
         """Test that default timeout is 5 seconds."""
         assert HEALTH_CHECK_TIMEOUT == 5
+
+
+class TestHealthCheckHTTPServer:
+    """Tests for health_check_http_server function."""
+
+    def test_non_http_server_fails(self):
+        """Test that stdio server type returns failure."""
+        server = MCPServer(
+            name="stdio-server",
+            type="stdio",
+            command="npx",
+            args=["-y", "test-package"]
+        )
+        success, message = health_check_http_server(server)
+        assert success is False
+        assert "not an HTTP server" in message
+        assert "stdio-server" in message
+
+    def test_missing_url_fails(self):
+        """Test that server without URL returns failure."""
+        server = MCPServer(
+            name="no-url-server",
+            type="http",
+            url=None
+        )
+        success, message = health_check_http_server(server)
+        assert success is False
+        assert "no URL specified" in message
+        assert "no-url-server" in message
+
+    def test_invalid_url_format_fails(self):
+        """Test that invalid URL format returns failure."""
+        server = MCPServer(
+            name="bad-url-server",
+            type="http",
+            url="not-a-valid-url"
+        )
+        success, message = health_check_http_server(server)
+        assert success is False
+        assert "bad-url-server" in message
+
+    def test_non_http_scheme_fails(self):
+        """Test that non-HTTP scheme returns failure."""
+        server = MCPServer(
+            name="ftp-server",
+            type="http",
+            url="ftp://example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+        assert success is False
+        assert "HTTP or HTTPS scheme" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_successful_health_check(self, mock_urlopen):
+        """Test successful health check with valid MCP response."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "serverInfo": {
+                    "name": "test-http-server",
+                    "version": "1.0.0"
+                },
+                "capabilities": {}
+            }
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="test-http",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is True
+        assert "healthy" in message
+        assert "test-http" in message
+        assert "test-http-server" in message
+        assert "1.0.0" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_http_error_returns_failure(self, mock_urlopen):
+        """Test that HTTP error returns failure."""
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://api.example.com/mcp",
+            code=500,
+            msg="Internal Server Error",
+            hdrs={},
+            fp=None
+        )
+
+        server = MCPServer(
+            name="error-http-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "HTTP 500" in message
+        assert "error-http-server" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_url_error_returns_failure(self, mock_urlopen):
+        """Test that URL error (connection failure) returns failure."""
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+
+        server = MCPServer(
+            name="unreachable-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "connection failed" in message
+        assert "unreachable-server" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_timeout_returns_failure(self, mock_urlopen):
+        """Test that timeout returns failure."""
+        mock_urlopen.side_effect = TimeoutError()
+
+        server = MCPServer(
+            name="slow-http-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "timed out" in message
+        assert "slow-http-server" in message
+        assert str(HEALTH_CHECK_TIMEOUT) in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_custom_timeout(self, mock_urlopen):
+        """Test that custom timeout is used."""
+        mock_urlopen.side_effect = TimeoutError()
+
+        server = MCPServer(
+            name="slow-http-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server, timeout=10)
+
+        assert success is False
+        assert "10" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_empty_response_fails(self, mock_urlopen):
+        """Test that empty response returns failure."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b""
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="empty-response-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "empty response" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_invalid_json_response_fails(self, mock_urlopen):
+        """Test that invalid JSON response returns failure."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b"{invalid json}"
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="invalid-json-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "invalid JSON" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_missing_jsonrpc_field_fails(self, mock_urlopen):
+        """Test that response without jsonrpc field returns failure."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({"id": 1, "result": {}}).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="no-jsonrpc-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "missing 'jsonrpc' field" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_wrong_jsonrpc_version_fails(self, mock_urlopen):
+        """Test that wrong JSON-RPC version returns failure."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({"jsonrpc": "1.0", "id": 1, "result": {}}).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="old-jsonrpc-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "invalid JSON-RPC version" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_error_response_returns_failure(self, mock_urlopen):
+        """Test that MCP error response returns failure."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32600,
+                "message": "Invalid request"
+            }
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="error-response-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "returned error" in message
+        assert "Invalid request" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_missing_result_and_error_fails(self, mock_urlopen):
+        """Test that response without result or error returns failure."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({"jsonrpc": "2.0", "id": 1}).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="incomplete-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "missing 'result' or 'error' field" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_headers_expanded_and_sent(self, mock_urlopen):
+        """Test that headers are expanded and sent with request."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"serverInfo": {"name": "header-test", "version": "1.0"}}
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="header-test",
+            type="http",
+            url="https://api.example.com/mcp",
+            headers={"Authorization": "Bearer ${TEST_TOKEN}"}
+        )
+
+        with patch.dict("os.environ", {"TEST_TOKEN": "secret123"}):
+            success, message = health_check_http_server(server)
+
+        assert success is True
+        # Verify headers were passed to Request
+        call_args = mock_urlopen.call_args[0][0]
+        assert call_args.get_header("Authorization") == "Bearer secret123"
+        assert call_args.get_header("Content-type") == "application/json"
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_url_environment_variables_expanded(self, mock_urlopen):
+        """Test that environment variables in URL are expanded."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"serverInfo": {"name": "url-test", "version": "1.0"}}
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="url-env-test",
+            type="http",
+            url="https://${API_HOST}/mcp"
+        )
+
+        with patch.dict("os.environ", {"API_HOST": "api.example.com"}):
+            success, message = health_check_http_server(server)
+
+        assert success is True
+        # Verify expanded URL was used
+        call_args = mock_urlopen.call_args[0][0]
+        assert call_args.full_url == "https://api.example.com/mcp"
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_correct_init_request_sent(self, mock_urlopen):
+        """Test that correct MCP initialize request is sent."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"serverInfo": {"name": "request-test", "version": "1.0"}}
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="request-test",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        health_check_http_server(server)
+
+        # Verify request body
+        call_args = mock_urlopen.call_args[0][0]
+        request_body = json.loads(call_args.data.decode("utf-8"))
+
+        assert request_body["jsonrpc"] == "2.0"
+        assert request_body["id"] == 1
+        assert request_body["method"] == "initialize"
+        assert request_body["params"]["protocolVersion"] == MCP_PROTOCOL_VERSION
+        assert request_body["params"]["clientInfo"]["name"] == MCP_CLIENT_NAME
+        assert request_body["params"]["clientInfo"]["version"] == MCP_CLIENT_VERSION
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_post_method_used(self, mock_urlopen):
+        """Test that POST method is used for HTTP request."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"serverInfo": {"name": "post-test", "version": "1.0"}}
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="post-test",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        health_check_http_server(server)
+
+        # Verify POST method
+        call_args = mock_urlopen.call_args[0][0]
+        assert call_args.get_method() == "POST"
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_os_error_handled(self, mock_urlopen):
+        """Test that OSError is handled gracefully."""
+        mock_urlopen.side_effect = OSError("Network is unreachable")
+
+        server = MCPServer(
+            name="network-error-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "network error" in message
+        assert "network-error-server" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_http_404_error(self, mock_urlopen):
+        """Test that HTTP 404 error is handled."""
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://api.example.com/mcp",
+            code=404,
+            msg="Not Found",
+            hdrs={},
+            fp=None
+        )
+
+        server = MCPServer(
+            name="not-found-server",
+            type="http",
+            url="https://api.example.com/mcp"
+        )
+        success, message = health_check_http_server(server)
+
+        assert success is False
+        assert "HTTP 404" in message
+
+    @patch("mcpx.utils.validation.urllib.request.urlopen")
+    def test_multiple_headers_sent(self, mock_urlopen):
+        """Test that multiple headers are all sent with request."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response_json = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"serverInfo": {"name": "multi-header-test", "version": "1.0"}}
+        }
+        mock_response.read.return_value = json.dumps(mock_response_json).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        server = MCPServer(
+            name="multi-header-test",
+            type="http",
+            url="https://api.example.com/mcp",
+            headers={
+                "Authorization": "Bearer token123",
+                "X-Custom-Header": "custom-value"
+            }
+        )
+
+        success, message = health_check_http_server(server)
+
+        assert success is True
+        call_args = mock_urlopen.call_args[0][0]
+        assert call_args.get_header("Authorization") == "Bearer token123"
+        assert call_args.get_header("X-custom-header") == "custom-value"
