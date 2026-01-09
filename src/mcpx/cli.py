@@ -6,7 +6,13 @@ import shutil
 import sys
 
 from mcpx import __version__
-from mcpx.config import get_config_path, load_config
+from mcpx.config import (
+    add_server_to_config,
+    get_config_path,
+    load_config,
+    remove_server_from_config,
+)
+from mcpx.models import MCPServer
 from mcpx.init import cmd_init
 from mcpx.sync import sync_all
 from mcpx.utils import validate_server
@@ -310,6 +316,237 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return EXIT_FATAL
 
 
+def cmd_add(args: argparse.Namespace) -> int:
+    """Execute add command.
+
+    ABOUTME: Adds a new MCP server to config
+    ABOUTME: Interactive mode prompts for server details
+    ABOUTME: Non-interactive mode uses command-line args
+    ABOUTME: Syncs to all platforms after adding
+    """
+    print(f"mcpx add v{__version__}")
+    print()
+
+    server_name = args.name
+
+    # Check if server already exists
+    config_path = get_config_path()
+    try:
+        if config_path.exists():
+            config = load_config(config_path)
+            if server_name in config.servers:
+                print(f"Warning: Server '{server_name}' already exists. It will be replaced.")
+                print()
+    except (ValueError, FileNotFoundError):
+        pass  # Config doesn't exist or is invalid, will be created
+
+    # Determine if interactive or non-interactive mode
+    if args.type:
+        # Non-interactive mode
+        server_type = args.type
+        command = args.command
+        url = args.url
+        server_args = args.args.split(",") if args.args else []
+        env_vars: dict[str, str] = {}
+        headers: dict[str, str] = {}
+
+        # Parse env vars (KEY=VALUE format)
+        if args.env:
+            for env_pair in args.env.split(","):
+                if "=" in env_pair:
+                    key, value = env_pair.split("=", 1)
+                    env_vars[key.strip()] = value.strip()
+
+        # Parse headers (KEY=VALUE format)
+        if args.headers:
+            for header_pair in args.headers.split(","):
+                if "=" in header_pair:
+                    key, value = header_pair.split("=", 1)
+                    headers[key.strip()] = value.strip()
+
+    else:
+        # Interactive mode
+        print(f"Adding new MCP server: {server_name}")
+        print()
+
+        # Prompt for type
+        while True:
+            server_type = input("Type (stdio/http) [stdio]: ").strip().lower() or "stdio"
+            if server_type in ("stdio", "http"):
+                break
+            print("  Invalid type. Please enter 'stdio' or 'http'.")
+
+        command = None
+        url = None
+        server_args = []
+        env_vars = {}
+        headers = {}
+
+        if server_type == "stdio":
+            # Prompt for command
+            command = input("Command (e.g., npx, node, python): ").strip()
+            if not command:
+                print("Error: Command is required for stdio servers.")
+                return EXIT_CONFIG_ERROR
+
+            # Prompt for args
+            args_input = input("Arguments (comma-separated, e.g., -y,@mcp/package): ").strip()
+            if args_input:
+                server_args = [arg.strip() for arg in args_input.split(",")]
+
+            # Prompt for env vars
+            print("Environment variables (KEY=VALUE, one per line, empty line to finish):")
+            while True:
+                env_input = input("  ").strip()
+                if not env_input:
+                    break
+                if "=" in env_input:
+                    key, value = env_input.split("=", 1)
+                    env_vars[key.strip()] = value.strip()
+                else:
+                    print("    Invalid format. Use KEY=VALUE.")
+
+        else:  # http
+            # Prompt for URL
+            url = input("URL (e.g., https://api.example.com/mcp): ").strip()
+            if not url:
+                print("Error: URL is required for HTTP servers.")
+                return EXIT_CONFIG_ERROR
+
+            # Prompt for headers
+            print("Headers (KEY=VALUE, one per line, empty line to finish):")
+            while True:
+                header_input = input("  ").strip()
+                if not header_input:
+                    break
+                if "=" in header_input:
+                    key, value = header_input.split("=", 1)
+                    headers[key.strip()] = value.strip()
+                else:
+                    print("    Invalid format. Use KEY=VALUE.")
+
+    # Create server object
+    if server_type == "stdio":
+        if not command:
+            print("Error: Command is required for stdio servers.")
+            return EXIT_CONFIG_ERROR
+        server = MCPServer(
+            name=server_name,
+            type="stdio",
+            command=command,
+            args=server_args,
+            env=env_vars,
+        )
+    else:  # http
+        if not url:
+            print("Error: URL is required for HTTP servers.")
+            return EXIT_CONFIG_ERROR
+        server = MCPServer(
+            name=server_name,
+            type="http",
+            url=url,
+            headers=headers,
+        )
+
+    print()
+    print(f"Adding server '{server_name}'...")
+
+    try:
+        # Add to config
+        add_server_to_config(config_path, server)
+        print(f"  Added to {config_path}")
+
+        # Sync to all platforms
+        print()
+        print("Syncing to platforms...")
+        config = load_config(config_path)
+        report = sync_all(config)
+
+        # Print results
+        for platform_name, count in report.servers_synced.items():
+            if count > 0:
+                print(f"  {platform_name} - {count} servers synced")
+            else:
+                print(f"  {platform_name} - failed")
+
+        if report.errors:
+            print()
+            for error_msg in report.errors:
+                print(f"  Error: {error_msg}")
+
+        print()
+        if report.errors:
+            print(f"Server '{server_name}' added with partial sync.")
+            return EXIT_PARTIAL
+        else:
+            print(f"Server '{server_name}' added and synced to all platforms.")
+            return EXIT_SUCCESS
+
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        return EXIT_FATAL
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    """Execute remove command.
+
+    ABOUTME: Removes an MCP server from config by name
+    ABOUTME: Syncs removal to all platforms
+    """
+    print(f"mcpx remove v{__version__}")
+    print()
+
+    server_name = args.name
+    config_path = get_config_path()
+
+    print(f"Removing server '{server_name}'...")
+
+    try:
+        # Remove from config
+        removed = remove_server_from_config(config_path, server_name)
+
+        if not removed:
+            print(f"  Server '{server_name}' not found in config.")
+            return EXIT_CONFIG_ERROR
+
+        print(f"  Removed from {config_path}")
+
+        # Sync to all platforms
+        print()
+        print("Syncing to platforms...")
+        config = load_config(config_path)
+        report = sync_all(config)
+
+        # Print results
+        for platform_name, count in report.servers_synced.items():
+            if count > 0:
+                print(f"  {platform_name} - {count} servers synced")
+            else:
+                print(f"  {platform_name} - failed")
+
+        if report.errors:
+            print()
+            for error_msg in report.errors:
+                print(f"  Error: {error_msg}")
+
+        print()
+        if report.errors:
+            print(f"Server '{server_name}' removed with partial sync.")
+            return EXIT_PARTIAL
+        else:
+            print(f"Server '{server_name}' removed and synced to all platforms.")
+            return EXIT_SUCCESS
+
+    except FileNotFoundError:
+        print(f"Error: Config file not found at {config_path}")
+        print()
+        print("Run 'mcpx sync' first to create a config.")
+        return EXIT_CONFIG_ERROR
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        return EXIT_FATAL
+
+
 def main() -> int:
     """Main CLI entry point.
 
@@ -353,6 +590,51 @@ def main() -> int:
         help="Initialize project-level MCP configuration"
     )
 
+    # add command
+    add_parser = subparsers.add_parser(
+        "add",
+        help="Add a new MCP server to config"
+    )
+    add_parser.add_argument(
+        "name",
+        help="Name of the MCP server to add"
+    )
+    add_parser.add_argument(
+        "--type",
+        choices=["stdio", "http"],
+        help="Server type (stdio or http)"
+    )
+    add_parser.add_argument(
+        "--command",
+        help="Command to run (for stdio type)"
+    )
+    add_parser.add_argument(
+        "--url",
+        help="URL endpoint (for http type)"
+    )
+    add_parser.add_argument(
+        "--args",
+        help="Comma-separated arguments (for stdio type)"
+    )
+    add_parser.add_argument(
+        "--env",
+        help="Comma-separated KEY=VALUE environment variables"
+    )
+    add_parser.add_argument(
+        "--headers",
+        help="Comma-separated KEY=VALUE headers (for http type)"
+    )
+
+    # remove command
+    remove_parser = subparsers.add_parser(
+        "remove",
+        help="Remove an MCP server from config"
+    )
+    remove_parser.add_argument(
+        "name",
+        help="Name of the MCP server to remove"
+    )
+
     # Parse args
     args = parser.parse_args()
 
@@ -365,6 +647,10 @@ def main() -> int:
         return cmd_validate(args)
     elif args.command == "init":
         return cmd_init()
+    elif args.command == "add":
+        return cmd_add(args)
+    elif args.command == "remove":
+        return cmd_remove(args)
     else:
         # No command specified, show help
         parser.print_help()

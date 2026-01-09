@@ -5,6 +5,9 @@ from pathlib import Path
 from mcpx.models import Config, MCPServer
 from mcpx.utils import expand_env_vars
 
+# ABOUTME: Type alias for raw server config data
+ServerData = dict[str, str | list[str] | dict[str, str]]
+
 # ABOUTME: Default config directory in user's home
 CONFIG_DIR = Path.home() / ".mcpx"
 
@@ -141,3 +144,113 @@ def load_config(path: Path) -> Config:
             )
 
     return Config(version=version, servers=servers)
+
+
+def save_config(path: Path, config: Config) -> None:
+    """Save config to JSON file.
+
+    ABOUTME: Writes config to disk in standard mcpx format
+    ABOUTME: Preserves existing file structure if present
+    ABOUTME: Creates parent directory if needed
+
+    Args:
+        path: Path to write config.json
+        config: Config object to save
+
+    Raises:
+        OSError: If file cannot be written
+    """
+    # Build JSON config
+    config_data: dict[str, dict[str, str | ServerData]] = {
+        "mcpx": {
+            "version": config.version
+        },
+        "servers": {}
+    }
+
+    for server_name, server in config.servers.items():
+        server_data: ServerData = {
+            "type": server.type
+        }
+
+        if server.type == "stdio":
+            if server.command:
+                server_data["command"] = server.command
+            if server.args:
+                server_data["args"] = server.args
+            if server.env:
+                server_data["env"] = server.env
+        elif server.type == "http":
+            if server.url:
+                server_data["url"] = server.url
+            if server.headers:
+                server_data["headers"] = server.headers
+
+        config_data["servers"][server_name] = server_data
+
+    # Ensure parent directory exists
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write config file
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=2)
+        f.write("\n")
+
+
+def add_server_to_config(path: Path, server: MCPServer) -> None:
+    """Add a server to the config file.
+
+    ABOUTME: Loads existing config, adds server, saves back
+    ABOUTME: Creates new config if file doesn't exist
+    ABOUTME: Overwrites server if name already exists
+
+    Args:
+        path: Path to config.json
+        server: Server to add
+
+    Raises:
+        ValueError: If config is invalid
+    """
+    if path.exists():
+        config = load_config(path)
+    else:
+        config = Config(version="1.0", servers={})
+
+    # Add server (mutable copy of servers dict)
+    new_servers = dict(config.servers)
+    new_servers[server.name] = server
+    new_config = Config(version=config.version, servers=new_servers)
+
+    save_config(path, new_config)
+
+
+def remove_server_from_config(path: Path, server_name: str) -> bool:
+    """Remove a server from the config file.
+
+    ABOUTME: Loads config, removes server by name, saves back
+    ABOUTME: Returns True if server was found and removed
+    ABOUTME: Returns False if server was not found
+
+    Args:
+        path: Path to config.json
+        server_name: Name of server to remove
+
+    Returns:
+        True if server was removed, False if not found
+
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        ValueError: If config is invalid
+    """
+    config = load_config(path)
+
+    if server_name not in config.servers:
+        return False
+
+    # Remove server (mutable copy of servers dict)
+    new_servers = dict(config.servers)
+    del new_servers[server_name]
+    new_config = Config(version=config.version, servers=new_servers)
+
+    save_config(path, new_config)
+    return True
