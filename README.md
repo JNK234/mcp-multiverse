@@ -1,596 +1,186 @@
 # mcpx
 
-Universal MCP server sync manager for AI coding assistants.
+**Port your MCP servers and skills across your AI coding tools from one source of truth.**
 
-## Overview
+Define your MCP servers and skills once (in Claude Code), and `mcpx` converts and writes them into every other tool's native format — Codex, OpenCode, Cline, Kilo, Gemini — handling each tool's quirks for you. It can also update all your CLI tools in one command.
 
-mcpx synchronizes MCP (Model Context Protocol) server configurations across multiple AI coding assistants from a single source of truth. Define your MCP servers once in `~/.mcpx/config.json`, and mcpx handles syncing to all your AI tools automatically.
+```
+mcpx import          # pull MCP servers from Claude Code into ~/.mcpx/manifest.json
+mcpx port            # write them to every installed tool, in that tool's own format
+```
 
-### Key Features
+---
 
-- **One config, all platforms**: Edit once, sync everywhere
-- **Bidirectional merge**: Auto-imports existing configs with newest-wins conflict resolution
-- **Health validation**: Servers are health-checked before sync (skip broken MCPs)
-- **Project-level control**: Load only the MCPs you need per project
-- **Backup retention**: Automatic backups with last 5 kept per platform
-- **Stdio and HTTP servers**: Support for both command-based and URL-based MCP servers
+## Why
 
-### Supported Platforms
+Every AI coding tool stores MCP servers differently:
 
-| Platform | Global Config | Project Config | Status |
-|----------|---------------|----------------|--------|
-| Claude Code | `~/.claude.json` | `.mcp.json` | Full |
-| Gemini CLI | `~/.gemini/settings.json` | Not supported | Global only |
-| Codex CLI | `~/.codex/config.toml` | Not supported | Global only |
-| Cline (VS Code) | VS Code settings | Not supported | Global only |
-| Roo Code (VS Code) | VS Code settings | `.roo/mcp.json` | Full |
-| Kilo Code (VS Code) | VS Code settings | `.kilocode/mcp.json` | Full |
+- **Claude Code** — `mcpServers` in `~/.claude.json`, `type`/`command`/`args`/`env`
+- **OpenCode** — `mcp` in `opencode.jsonc`, `type: local/remote`, `command` is a **single array**, env key is `environment`
+- **Codex** — `[mcp_servers.<name>]` TOML, transport auto-detected, HTTP via `url`/`http_headers`
+- **Cline** — `mcpServers` JSON, `autoApprove`, remote needs `type: streamableHttp`
+- **Kilo** — `mcpServers` JSON, `alwaysAllow`, VS Code globalStorage
+- **Gemini** — `mcpServers` JSON in `~/.gemini/settings.json`
 
-## Installation
+Keeping these in sync by hand is tedious and error-prone. `mcpx` maps them all to one canonical representation and writes each tool's correct shape — **without ever clobbering your other settings** (`$schema`, themes, auth, etc. are preserved).
+
+## Install
 
 ```bash
-pip install mcpx
+uv pip install -e .      # from source
+# or
+pip install -e .
 ```
 
-Or install with uv:
-
-```bash
-uv pip install mcpx
-```
-
-## Quick Start
-
-### First Run: Auto-Import Existing Servers
-
-```bash
-mcpx sync
-```
-
-On first run, mcpx will:
-1. Detect all installed platforms (check config file existence)
-2. Auto-import existing MCP configs into `~/.mcpx/config.json`
-3. Run health checks on each server
-4. Create backups of each platform config
-5. Sync to all platforms in their native format
-
-### Manual Configuration
-
-1. Create `~/.mcpx/config.json`:
-
-```json
-{
-  "mcpx": {
-    "version": "1.0"
-  },
-  "servers": {
-    "filesystem": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/john/projects"]
-    },
-    "github": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-2. Sync to all platforms:
-
-```bash
-mcpx sync
-```
-
-## Configuration
-
-### Global Config Location
-
-`~/.mcpx/config.json` (created automatically on first run)
-
-### Server Types
-
-#### Stdio Servers (command-based)
-
-```json
-{
-  "type": "stdio",
-  "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-github"],
-  "env": {
-    "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
-  }
-}
-```
-
-#### HTTP Servers (URL-based)
-
-```json
-{
-  "type": "http",
-  "url": "https://mcp.supabase.com/mcp",
-  "headers": {
-    "Authorization": "Bearer ${API_TOKEN}"
-  }
-}
-```
-
-### Example Configuration
-
-```json
-{
-  "mcpx": {
-    "version": "1.0"
-  },
-  "servers": {
-    "github": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
-      }
-    },
-    "brave-search": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-      "env": {
-        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
-      }
-    },
-    "supabase": {
-      "type": "http",
-      "url": "https://mcp.supabase.com/mcp"
-    },
-    "local-tools": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["my-mcp-server"],
-      "env": {
-        "API_KEY": "${MY_API_KEY}"
-      }
-    }
-  }
-}
-```
-
-### Environment Variable Expansion
-
-Use `${VAR_NAME}` syntax for environment variable references:
-
-```json
-{
-  "env": {
-    "API_KEY": "${MY_SERVICE_API_KEY}"
-  }
-}
-```
-
-Variables are expanded at sync time. Set actual values in your shell profile (`~/.zshrc`, `~/.bashrc`):
-
-```bash
-export MY_SERVICE_API_KEY="actual-secret-value"
-```
-
-Supported syntax:
-- `${VAR_NAME}` - Expands to environment variable value
-- `${VAR_NAME:-default}` - Uses default if VAR_NAME not set
+Requires Python 3.12+.
 
 ## Commands
 
-### `mcpx sync` - Sync to All Platforms
-
-Bidirectional merge and sync to all platforms.
+### `mcpx import` — pull servers into the manifest
 
 ```bash
-mcpx sync
-mcpx sync --verbose
-mcpx sync --skip-health
+mcpx import                 # from Claude Code (default source)
+mcpx import --from claude
 ```
 
-**Behavior:**
-1. Load existing configs from all installed platforms
-2. Merge into unified config (newest wins on conflicts)
-3. Run health check on each MCP server
-4. Skip MCPs that fail health check (with warning)
-5. Create backup of each platform config
-6. Write to all platforms in their native format
-7. Report results
+Reads the source tool's MCP config and writes the canonical manifest at `~/.mcpx/manifest.json`. This is the editable source of truth — you can hand-edit it if you like.
 
-**Flags:**
-- `--verbose` - Show detailed sync progress
-- `--skip-health` - Skip health check (faster, less safe)
-
-**Exit codes:**
-- `0` = All platforms synced successfully
-- `1` = Partial success (some platforms failed)
-- `2` = Config error (invalid JSON syntax)
-- `3` = Fatal error
-
-### `mcpx init` - Initialize Project-Level MCPs
-
-Interactive project-level MCP selection.
-
-```bash
-mcpx init
-mcpx init --servers github,filesystem,zen
-```
-
-**Behavior:**
-1. Display list of available MCPs from global config
-2. Interactive checkbox UI to select MCPs for this project
-3. Generate project configs for supported platforms
-4. Warn that Gemini/Codex/Cline don't support project-level configs
-
-**Flags:**
-- `--servers github,zen,filesystem` - Non-interactive, specify servers directly
-
-**Creates:**
-- `.mcp.json` (Claude Code)
-- `.roo/mcp.json` (Roo Code)
-- `.kilocode/mcp.json` (Kilo Code)
-
-### `mcpx list` - List All MCPs
-
-Display all servers in flat list format.
+### `mcpx list` — show what's in the manifest
 
 ```bash
 mcpx list
 ```
 
-**Example output:**
-
 ```
-MCPs in ~/.mcpx/config.json:
+MCP servers in ~/.mcpx/manifest.json:
 
-  github          npx -y @modelcontextprotocol/server-github
-  filesystem      npx -y @modelcontextprotocol/server-filesystem /path
-  supabase        [HTTP] https://mcp.supabase.com/mcp
-  zen             /path/to/zen-mcp-server
+  github                   [stdio] npx
+  filesystem               [stdio] npx
+  web-search-prime         [http] https://api.z.ai/api/mcp/web_search_prime/mcp
 
-Total: 4 servers (3 stdio, 1 http)
+Total: 3 server(s)
 ```
 
-### `mcpx add <name>` - Add a New MCP Server
-
-Add a new MCP server and auto-sync to all platforms.
-
-**Interactive mode:**
-```bash
-mcpx add myserver
-# Prompts for: type (stdio/http), command/url, args, env vars
-# Then syncs to all platforms
-```
-
-**Non-interactive mode:**
-```bash
-mcpx add myserver --type stdio --command npx --args "-y,my-mcp-package"
-mcpx add my-api --type http --url "https://api.example.com/mcp"
-```
-
-### `mcpx remove <name>` - Remove an MCP Server
-
-Remove an MCP server and sync removal to all platforms.
+### `mcpx update` — update all your CLI tools
 
 ```bash
-mcpx remove myserver
-# Removes from config, syncs to all platforms
+mcpx update
 ```
 
-### `mcpx --version` - Show Version
+Updates every installed CLI tool in one shot, each via its own updater:
+
+```
+✓ Claude Code: updated        # claude update
+✓ Gemini CLI: updated         # npm install -g @google/gemini-cli@latest
+✓ Codex CLI: updated          # codex update
+✓ OpenCode: updated           # opencode upgrade
+· Cline: Update via VS Code Extensions panel
+· Kilo Code: Update via VS Code Extensions panel
+Update complete: 4 updated, 0 failed.
+```
+
+Each tool's update command is a declarative recipe on its descriptor (traceable, no hardcoded branches). Tools that aren't installed are skipped; VS Code extensions (Cline, Kilo) print guidance since they can't be updated from a shell.
+
+### `mcpx port` — write servers to your tools
 
 ```bash
-mcpx --version
-# Output: mcpx v0.1.0
+mcpx port                       # to every installed tool (auto-detected)
+mcpx port --to opencode         # to one tool
+mcpx port --to opencode,codex   # to several
+mcpx port --dry-run             # preview exactly what would be written — writes nothing
 ```
 
-### `mcpx --help` - Show Help
+- **Auto-detects installed tools** (those whose config directory exists) and excludes the source.
+- **Backs up** any file it overwrites to `~/.mcpx/backups/` (keeps the last 5 per tool).
+- **Preserves foreign settings** — only the MCP block is rewritten; `$schema`, themes, auth, and everything else stay put.
+- **Warns, never silently drops** — e.g. an HTTP server going to a tool without HTTP support is skipped with a message.
+
+Always safe to run `--dry-run` first.
+
+### Skills — port Claude skills to your other tools
+
+The ecosystem standardized on a shared `SKILL.md` format, so mcpx can copy your Claude Code skills (and their helper files) into every other tool's native skills directory.
 
 ```bash
-mcpx --help
-mcpx sync --help
-mcpx init --help
-mcpx add --help
-mcpx remove --help
+mcpx import --skills                       # copy ~/.claude/skills into ~/.mcpx/store/skills
+mcpx list --skills                         # show what's in the store
+mcpx port --kind skills --to opencode      # write them to a tool's skills dir
+mcpx port --kind skills --dry-run          # preview, writes nothing
 ```
 
-## Health Checks
+| Tool | Skills land in | Notes |
+|---|---|---|
+| Codex | `~/.codex/skills/` | drops `allowed-tools`/`model` frontmatter (warns) |
+| OpenCode | `~/.config/opencode/skills/` | drops `allowed-tools`/`model` |
+| Gemini | `~/.gemini/skills/` | full SKILL.md spec (nothing dropped) |
+| Cline | `~/.cline/skills/` | drops `allowed-tools`/`model` |
+| Kilo | `~/.kilo/skills/` | full spec |
 
-Before syncing, each MCP server undergoes health validation.
+- **Multi-file skills** (scripts, references) are copied byte-exact. **Dependency junk** (`node_modules`, `.git`, lockfiles, `.temp-*`, `.DS_Store`) is skipped by pattern.
+- Symlinked skills are resolved. Directories without a `SKILL.md` are skipped.
+- Frontmatter keys a target can't represent are dropped **with a warning** — body and helper files are never lost.
 
-### Stdio Servers
-- Verify `command` exists in PATH
-- Verify referenced environment variables exist (warning if missing)
-- Attempt to start server with 5-second timeout
-- Server must respond to initialization
-
-### HTTP Servers
-- Verify URL is valid format
-- Attempt HTTP GET/HEAD to URL
-- Must return 2xx or MCP-specific response
-
-### Failed Servers
-- Logged with reason
-- Skipped from sync (not written to platform configs)
-- Retained in master config with `"disabled": true`
-
-Use `--skip-health` to bypass health checks (faster, but may sync broken servers).
-
-## Project-Level Configuration
-
-For projects that need specific MCPs, use `mcpx init`:
+## Typical workflow
 
 ```bash
-cd /path/to/my-project
-mcpx init
+# 1. You added a new MCP server in Claude Code. Pull it in:
+mcpx import
+
+# 2. See what would change everywhere:
+mcpx port --dry-run
+
+# 3. Apply it:
+mcpx port
+
+# 4. Confirm a tool actually loaded it (OpenCode example):
+opencode mcp list
 ```
 
-### Project Config Format (`.mcp.json`)
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
-      }
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
-    }
-  }
-}
-```
-
-### Project vs Global Behavior
-
-When a project has `.mcp.json`:
-- **Project MCPs replace global MCPs** (not additive)
-- Only selected MCPs are available in that project
-- Provides cleaner, more predictable behavior
-
-### Platforms Without Project Support
-
-Gemini CLI, Codex CLI, and Cline only have global configs:
-- These platforms will continue using global MCPs
-- `mcpx init` displays a warning about this limitation
-
-## Platform-Specific Details
-
-### Claude Code
-
-- **Global config:** `~/.claude.json`
-- **Project config:** `.mcp.json` in project root
-- **Format:** JSON with `mcpServers` key
-
-### Gemini CLI
-
-- **Global config:** `~/.gemini/settings.json`
-- **Project config:** Not supported
-- **Format:** JSON with `mcpServers` key
-- **Preserves:** Other settings in file
-
-### Codex CLI
-
-- **Global config:** `~/.codex/config.toml`
-- **Project config:** Not supported
-- **Format:** TOML with `mcp_servers` key (snake_case)
-
-### Cline (VS Code)
-
-- **Global config:** `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-- **Project config:** Not supported
-- **Format:** JSON with `mcpServers` key
-- **Adds:** `disabled: false`, `alwaysAllow: []` defaults
-
-### Roo Code (VS Code)
-
-- **Global config:** `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json`
-- **Project config:** `.roo/mcp.json`
-- **Format:** JSON with `mcpServers` key
-- **Adds:** `disabled: false`, `alwaysAllow: []` defaults
-
-### Kilo Code (VS Code)
-
-- **Global config:** `~/Library/Application Support/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json`
-- **Project config:** `.kilocode/mcp.json`
-- **Format:** JSON with `mcpServers` key
-- **Adds:** `disabled: false`, `alwaysAllow: []` defaults
-
-## Backup System
-
-### Automatic Backups
-
-Every sync creates automatic backups in `~/.mcpx/backups/`:
+## How it works
 
 ```
-~/.mcpx/backups/
-├── claude_20250108_143022.json
-├── gemini_20250108_143022.json
-├── codex_20250108_143022.toml
-└── ...
+Claude Code ──import──▶  Canonical IR  ──port──▶  Codex / OpenCode / Cline / Kilo / Gemini
+   (source)            (~/.mcpx/manifest.json)        (each tool's native format)
 ```
 
-**Format:** `<platform>_<timestamp>.<ext>`
+- **Canonical IR** (`ir.py`) — one tool-agnostic `MCPServerIR` (the superset of every tool's fields). An `extra` field preserves any native field that has no canonical home, so nothing is lost.
+- **Declarative descriptors** (`descriptors/*.py`) — each tool is described by **pure data**: where its config lives, its format, and a list of `FieldMap`s. To see how `command + args` becomes OpenCode's single array, you read **one line** in `descriptors/opencode.py`. There are **no `if tool == "x"` branches** in the engine.
+- **One generic engine** (`engine/mapping.py`) — applies the descriptor's `FieldMap`s in both directions. Because import and export are symmetric, reverse-sync (tool → Claude) and tool ↔ tool are natural future extensions.
+- **Format codecs** (`codecs/`) — read/write JSON, JSONC (comment-tolerant, preserves `$schema`), and TOML, preserving everything they don't manage.
 
-### Retention Policy
+### Per-tool quirks handled for you
 
-- Keeps last **5 backups per platform**
-- Older backups are automatically deleted
-- Created before each sync write
+- **Codex + HTTP servers** — Codex's native streamable-HTTP MCP client can't complete the handshake with SSE-style servers (a known upstream bug). So mcpx ports HTTP servers to Codex as a **stdio bridge** — `npx -y mcp-remote <url> --header "Authorization: Bearer …"` — which connects reliably (verified: zero handshake errors). stdio servers are written natively. This requires Node/`npx` (the first run downloads `mcp-remote`). Other tools (OpenCode, Cline) get native HTTP, which they handle fine.
 
-## Sync Behavior
+### Secrets
 
-### Bidirectional Merge Strategy
+`mcpx` writes `${VAR}` references **verbatim** — it never expands them into literal values, so it won't scatter plaintext secrets across config files. (If your *source* already stores a literal secret, mcpx carries it as-is; it doesn't invent references. See `.planning/research/DEFERRED_ITEMS.md`.)
 
-1. **Collect**: Load MCPs from all installed platforms
-2. **Deduplicate**: Same MCP name across platforms = potential conflict
-3. **Resolve**: Newest modification timestamp wins
-4. **Merge**: Union of all unique MCPs into master config
-5. **Distribute**: Write master config to each platform's format
+## Adding a new tool
 
-### Error Handling
+Adding support for another tool is a one-file, data-only change — no engine edits:
 
-- **Platform fails**: Continue syncing other platforms, report failure at end
-- **Config parse error**: Exit with code 2, show line/column of error
-- **No platforms found**: Warning, sync to available platforms only
+1. Create `src/mcpx/descriptors/<tool>.py` with a `ToolDescriptor`: its `config_paths`, `fmt` (`json`/`jsonc`/`toml-flat`), and an `MCPSpec` whose `fields` are `FieldMap`s mapping each IR field to that tool's native key (with `to_native`/`from_native` transforms for any quirks).
+2. Add it to `REGISTRY` in `src/mcpx/descriptors/__init__.py`.
 
-## Troubleshooting
-
-### "Command not found" Error
-
-**Problem:** Server command doesn't exist on PATH.
-
-**Solution:**
-1. Install the required tool (e.g., `npm install -g npx`)
-2. Use full path to command in config
-3. Run `mcpx sync --verbose` to see health check details
-
-### "Config file not found"
-
-**Problem:** `~/.mcpx/config.json` doesn't exist.
-
-**Solution:** Run `mcpx sync` - it will auto-generate the config from existing platforms.
-
-### "Permission denied" when writing config
-
-**Problem:** No write access to platform config directory.
-
-**Solution:**
-1. Check directory permissions: `ls -la ~/.claude.json`
-2. Fix permissions: `chmod u+w ~/.claude.json`
-
-### Health check failing
-
-**Problem:** Server fails health check and is skipped.
-
-**Solution:**
-1. Run `mcpx sync --verbose` to see detailed error
-2. Fix the server configuration or environment
-3. Use `mcpx sync --skip-health` to force sync (not recommended)
-
-### Environment variables not expanding
-
-**Problem:** `${VAR}` not replaced with actual value.
-
-**Solution:**
-1. Ensure variable is set in shell: `echo $MY_VAR`
-2. Use correct syntax: `${VAR_NAME}` (not `$VAR_NAME`)
-3. Export variable: `export MY_VAR=value`
-
-## Example Workflows
-
-### Initial Setup
-
-```bash
-# First run - imports existing configs from all platforms
-mcpx sync
-# Output: Found 18 MCPs across 4 platforms. Created ~/.mcpx/config.json
-
-# View what was imported
-mcpx list
-```
-
-### Adding a New MCP
-
-```bash
-# Interactive
-mcpx add weather
-# Prompts for type, command/url, args, env
-# Auto-syncs to all platforms
-
-# Non-interactive
-mcpx add github --type stdio --command npx --args "-y,@modelcontextprotocol/server-github"
-```
-
-### Removing an MCP
-
-```bash
-mcpx remove old-server
-# Removes from config and all platforms
-```
-
-### Project Setup
-
-```bash
-cd my-project
-mcpx init
-# Interactive: Select MCPs for this project
-# Creates .mcp.json with selected MCPs
-```
-
-### Manual Config Edit
-
-```bash
-# Edit master config
-nano ~/.mcpx/config.json
-
-# Push changes to all platforms
-mcpx sync
-```
+That's it — `import`, `port`, `list`, and auto-detection pick it up.
 
 ## Development
 
-### Running from Source
-
 ```bash
-git clone https://github.com/yourusername/mcp-multiverse.git
-cd mcp-multiverse
-uv pip install -e .
-mcpx --help
+uv run pytest                      # tests
+uv run mypy src/mcpx --strict      # type check
+uv run ruff check src tests        # lint
 ```
 
-### Running Tests
+## Status & scope
 
-```bash
-uv run pytest
-```
-
-### Type Checking
-
-```bash
-uv run mypy src/mcpx --strict
-```
-
-### Linting
-
-```bash
-uv run ruff check src tests
-```
-
-## Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
+- ✅ **MCP servers** — port across all six tools. Verified end-to-end against OpenCode + Codex (servers connect, including HTTP via the Codex bridge).
+- ✅ **Skills** — port Claude skills (+ helper files) to all five tools. Verified: OpenCode's `debug skill` recognizes every ported skill.
+- ✅ **`mcpx update`** — update all installed CLI tools in one command.
+- 🔜 **Commands / agents** — next; the IR/descriptor architecture has clean seams for them.
+- See `.planning/research/DEFERRED_ITEMS.md` for known follow-ups (literal-secret detection, unset-`${VAR}` warnings, optional `validate`).
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Changelog
-
-### v0.1.0 (2026-01-08)
-
-- Initial release
-- Support for 6 AI coding platforms (Claude, Gemini, Codex, Cline, Roo, Kilo)
-- JSON configuration format with environment variable expansion
-- Stdio and HTTP server support
-- Bidirectional sync with newest-wins conflict resolution
-- Health checks for all server types
-- Backup system with 5-backup retention per platform
-- Project-level MCP configuration (Claude, Roo, Kilo)
-- Interactive `mcpx init` for project setup
-- `mcpx add` and `mcpx remove` commands
-- Comprehensive validation and error reporting
+MIT

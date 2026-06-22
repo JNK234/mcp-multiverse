@@ -1,660 +1,258 @@
-# CLI interface for mcpx
+# ABOUTME: CLI for mcpx — IR-based port manager. Commands: import / port / list.
+# ABOUTME: Claude Code is the source of truth; port pushes MCP servers to the other tools.
+from __future__ import annotations
+
 import argparse
-import os
-import re
-import shutil
 import sys
 
 from mcpx import __version__
-from mcpx.config import (
-    add_server_to_config,
-    get_config_path,
-    load_config,
-    remove_server_from_config,
+from mcpx.descriptors import REGISTRY
+from mcpx.engine.skills_engine import export_skills, import_skills
+from mcpx.manifest import (
+    get_manifest_path,
+    get_skills_store_dir,
+    load_manifest,
+    load_skills_from_store,
+    save_skills_to_store,
 )
-from mcpx.models import MCPServer
-from mcpx.init import cmd_init
-from mcpx.sync import sync_all
-from mcpx.utils import validate_server
+from mcpx.port import import_to_manifest, installed_targets, port
+from mcpx.update import run_updates
 
-# ABOUTME: Exit codes per spec
-# 0 = success, 1 = partial success, 2 = config error, 3 = fatal
+# Exit codes: 0 = success, 1 = partial, 2 = config error, 3 = fatal.
 EXIT_SUCCESS = 0
 EXIT_PARTIAL = 1
 EXIT_CONFIG_ERROR = 2
 EXIT_FATAL = 3
 
 
-def cmd_sync(args: argparse.Namespace) -> int:
-    """Execute sync command.
-
-    ABOUTME: Loads config, validates, syncs to all platforms
-    ABOUTME: Triggers first-run init if config doesn't exist
-    ABOUTME: Returns exit code based on results
-    """
-    from mcpx.sync import first_run_init
-
-    # Print header
-    print(f"mcpx sync v{__version__}")
-
-    try:
-        # Get config path
-        config_path = get_config_path()
-
-        # Check if config exists
-        if not config_path.exists():
-            print()
-            print("No config found. Creating ~/.mcpx/config.json...")
-            print()
-            # Run first-run initialization
-            first_report = first_run_init()
-            print()
-            msg = (
-                f"Generated config with {first_report.server_count} "
-                f"unique server(s) (deduplicated)."
-            )
-            print(msg)
-            print(f"Edit {config_path} to customize, then run 'mcpx sync' again.")
-            print()
-            return EXIT_SUCCESS
-
-        print(f"Loading config from {config_path}")
-        config = load_config(config_path)
-
-        # Show servers found
-        server_count = len(config.servers)
-        server_names = ", ".join(config.servers.keys())
-        print(f"Found {server_count} MCP server(s): {server_names}")
-        print()
-
-        # Validate commands
-        print("Validating commands...")
-        has_errors = False
-        for server_name, server in config.servers.items():
-            errors = validate_server(server)
-            for error in errors:
-                if error.severity == "error":
-                    print(f"  Server '{server_name}': {error.message}")
-                    has_errors = True
-                else:
-                    print(f"  Warning: {error.message}")
-
-        if has_errors:
-            print()
-            print("Config validation failed. Fix errors above and try again.")
-            return EXIT_CONFIG_ERROR
-
-        # Count unique commands for summary
-        commands = {s.command for s in config.servers.values()}
-        for cmd in commands:
-            print(f"  {cmd} found")
-
-        print()
-        print("Syncing to platforms...")
-
-        # Perform sync
-        report = sync_all(config)
-
-        # Print results
-        for platform_name, count in report.servers_synced.items():
-            if count > 0:
-                print(f"  {platform_name} - {count} servers synced")
-            else:
-                print(f"  {platform_name} - failed")
-
-        # Print errors if any
-        if report.errors:
-            print()
-            for error_msg in report.errors:
-                print(f"  Error: {error_msg}")
-
-        print()
-        # Determine exit code
-        if report.errors:
-            msg = (
-                f"Sync complete: {report.platforms_synced}/"
-                f"{report.platforms_total} platforms updated, "
-                f"{len(report.errors)} failed"
-            )
-            print(msg)
-            return EXIT_PARTIAL
-        else:
-            msg = (
-                f"Sync complete: {report.platforms_synced}/"
-                f"{report.platforms_total} platforms updated"
-            )
-            print(msg)
-            return EXIT_SUCCESS
-
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        print()
-        print("Config file not found. Create one at ~/.mcpx/config.json")
+def cmd_import(args: argparse.Namespace) -> int:
+    """Import a source tool's MCP servers (or skills) into the IR store."""
+    source = getattr(args, "source", "claude") or "claude"
+    if source not in REGISTRY:
+        print(f"Error: unknown source tool '{source}'. Known: {', '.join(sorted(REGISTRY))}")
         return EXIT_CONFIG_ERROR
-    except Exception as e:
-        print(f"Fatal error: {e}")
-        return EXIT_FATAL
+
+    print(f"mcpx import v{__version__}")
+
+    if getattr(args, "skills", False):
+        skills = import_skills(REGISTRY[source])
+        save_skills_to_store(skills)
+        print(f"Imported {len(skills)} skill(s) from "
+              f"{REGISTRY[source].display_name} into {get_skills_store_dir()}")
+        for name in skills:
+            print(f"  {name}")
+        return EXIT_SUCCESS
+
+    manifest = import_to_manifest(source)
+    print(f"Imported {len(manifest.servers)} MCP server(s) from "
+          f"{REGISTRY[source].display_name} into {get_manifest_path()}")
+    for name in manifest.servers:
+        print(f"  {name}")
+    return EXIT_SUCCESS
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    """Execute list command.
-
-    ABOUTME: Loads config and displays all servers
-    ABOUTME: Returns exit code based on success/failure
-    """
-    # Print header
-    print(f"mcpx list v{__version__}")
-    print()
-
-    try:
-        # Get and load config
-        config_path = get_config_path()
-        config = load_config(config_path)
-
-        print(f"MCP Servers in {config_path}:")
+    """List MCP servers (or skills) currently in the IR store."""
+    if getattr(args, "skills", False):
+        store = get_skills_store_dir()
+        skills = load_skills_from_store(store)
+        if not skills:
+            print(f"Error: no skills in store at {store}. Run 'mcpx import --skills' first.")
+            return EXIT_CONFIG_ERROR
+        print(f"Skills in {store}:")
         print()
-
-        # List each server
-        for server_name, server in config.servers.items():
-            print(f"  {server_name}")
-            print(f"    type: {server.type}")
-
-            if server.type == "stdio":
-                print(f"    command: {server.command}")
-
-                if server.args:
-                    args_str = " ".join(server.args)
-                    print(f"    args: {args_str}")
-
-                if server.env:
-                    env_str = ", ".join(f"{k}={v}" for k, v in server.env.items())
-                    print(f"    env: {env_str}")
-            elif server.type == "http":
-                if server.url:
-                    print(f"    url: {server.url}")
-
-                if server.headers:
-                    headers_str = ", ".join(f"{k}={v}" for k, v in server.headers.items())
-                    print(f"    headers: {headers_str}")
-
-            print()
-
-        print(f"Total: {len(config.servers)} server(s)")
+        for name, skill in skills.items():
+            desc = skill.frontmatter.get("description", "")
+            extra = f" (+{len(skill.files)} files)" if skill.files else ""
+            print(f"  {name:24}{extra} {desc[:60]}")
+        print()
+        print(f"Total: {len(skills)} skill(s)")
         return EXIT_SUCCESS
 
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        print()
-        print("Config file not found. Create one at ~/.mcpx/config.json")
+    path = get_manifest_path()
+    if not path.exists():
+        print(f"Error: no manifest at {path}. Run 'mcpx import' first.")
         return EXIT_CONFIG_ERROR
-    except Exception as e:
-        print(f"Fatal error: {e}")
-        return EXIT_FATAL
 
-
-def cmd_validate(args: argparse.Namespace) -> int:
-    """Execute validate command.
-
-    ABOUTME: Loads config and validates without modifying files
-    ABOUTME: Performs full validation per spec section 5.2
-    ABOUTME: Returns exit code based on validation results
-    """
-    # Print header
-    print(f"mcpx validate v{__version__}")
+    manifest = load_manifest(path)
+    print(f"MCP servers in {path}:")
     print()
+    for name, server in manifest.servers.items():
+        detail = server.command if server.command else server.url
+        print(f"  {name:24} [{server.transport.value}] {detail}")
+    print()
+    print(f"Total: {len(manifest.servers)} server(s)")
+    return EXIT_SUCCESS
 
-    try:
-        # Get and load config
-        config_path = get_config_path()
-        print(f"Validating {config_path}...")
-        print()
 
-        config = load_config(config_path)
+def _resolve_targets(args: argparse.Namespace, source: str) -> list[str] | None:
+    """Resolve --to list (validated) or all installed targets. None signals a config error."""
+    to_arg = getattr(args, "to", None)
+    if to_arg:
+        target_ids = [t.strip() for t in to_arg.split(",") if t.strip()]
+        unknown = [t for t in target_ids if t not in REGISTRY]
+        if unknown:
+            print(f"Error: unknown target tool(s): {', '.join(unknown)}. "
+                  f"Known: {', '.join(sorted(REGISTRY))}")
+            return None
+        return target_ids
+    return installed_targets(exclude=source)
 
-        print("  ✓ JSON syntax valid")
-        print(f"  ✓ {len(config.servers)} server(s) defined")
-        print()
 
-        # Separate stdio and HTTP servers for validation
-        stdio_servers = {name: s for name, s in config.servers.items() if s.type == "stdio"}
-        http_servers = {name: s for name, s in config.servers.items() if s.type == "http"}
+def cmd_port(args: argparse.Namespace) -> int:
+    """Port MCP servers (or skills) from the store to one or more target tools."""
+    source = getattr(args, "source", "claude") or "claude"
+    kind = getattr(args, "kind", "mcp") or "mcp"
+    dry_run = bool(getattr(args, "dry_run", False))
 
-        # Check stdio servers
-        if stdio_servers:
-            print("  Checking stdio servers:")
-            commands = {server.command for server in stdio_servers.values() if server.command}
-            command_errors = 0
-            for cmd in sorted(commands):
-                cmd_path = shutil.which(cmd)
-                if cmd_path:
-                    print(f"    ✓ {cmd} -> {cmd_path}")
-                else:
-                    print(f"    ✗ {cmd} not found")
-                    command_errors += 1
-
-        # Check HTTP servers
-        if http_servers:
-            print()
-            print("  Checking HTTP servers:")
-            for server_name, server in http_servers.items():
-                if server.url:
-                    print(f"    ✓ {server_name}: {server.url}")
-
-        # Check environment variables
-        env_warnings = 0
-        env_references: dict[str, set[str]] = {}  # var_name -> server_names
-
-        for server_name, server in config.servers.items():
-            if server.type == "stdio" and server.command:
-                # Check in command
-                for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', server.command):
-                    var_name = match.group(1)
-                    if var_name not in env_references:
-                        env_references[var_name] = set()
-                    env_references[var_name].add(server_name)
-
-                # Check in args
-                for arg in server.args:
-                    for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', arg):
-                        var_name = match.group(1)
-                        if var_name not in env_references:
-                            env_references[var_name] = set()
-                        env_references[var_name].add(server_name)
-
-                # Check in env values
-                for _key, value in server.env.items():
-                    for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', value):
-                        var_name = match.group(1)
-                        if var_name not in env_references:
-                            env_references[var_name] = set()
-                        env_references[var_name].add(server_name)
-            elif server.type == "http" and server.url:
-                # Check in URL
-                for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', server.url):
-                    var_name = match.group(1)
-                    if var_name not in env_references:
-                        env_references[var_name] = set()
-                    env_references[var_name].add(server_name)
-
-                # Check in headers
-                for _key, value in server.headers.items():
-                    for match in re.finditer(r'\$\{([A-Z_][A-Z0-9_]*)\}', value):
-                        var_name = match.group(1)
-                        if var_name not in env_references:
-                            env_references[var_name] = set()
-                        env_references[var_name].add(server_name)
-
-        # Print environment variable checks
-        if env_references:
-            print()
-            print("  Checking environment variables:")
-            for var_name, server_names in sorted(env_references.items()):
-                if var_name in os.environ:
-                    print(f"    ✓ ${var_name} -> {os.environ[var_name]}")
-                else:
-                    servers_str = ", ".join(sorted(server_names))
-                    print(f"    ⚠ ${{{var_name}}} not set (server: {servers_str})")
-                    env_warnings += 1
-
-        # Summary
-        print()
-        command_errors = sum(1 for s in stdio_servers.values() if s.command and not shutil.which(s.command))
-        print(f"Validation complete: {command_errors} error(s), {env_warnings} warning(s)")
-
-        if command_errors > 0:
-            return EXIT_CONFIG_ERROR
-        else:
-            return EXIT_SUCCESS
-
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        print()
-        print("Config file not found. Create one at ~/.mcpx/config.json")
+    target_ids = _resolve_targets(args, source)
+    if target_ids is None:
         return EXIT_CONFIG_ERROR
-    except Exception as e:
-        print(f"Fatal error: {e}")
-        return EXIT_FATAL
+
+    if kind == "skills":
+        return _port_skills(source, target_ids, dry_run)
+    return _port_mcp(source, target_ids, dry_run)
 
 
-def cmd_add(args: argparse.Namespace) -> int:
-    """Execute add command.
-
-    ABOUTME: Adds a new MCP server to config
-    ABOUTME: Interactive mode prompts for server details
-    ABOUTME: Non-interactive mode uses command-line args
-    ABOUTME: Syncs to all platforms after adding
-    """
-    print(f"mcpx add v{__version__}")
-    print()
-
-    server_name = args.name
-
-    # Check if server already exists
-    config_path = get_config_path()
-    try:
-        if config_path.exists():
-            config = load_config(config_path)
-            if server_name in config.servers:
-                print(f"Warning: Server '{server_name}' already exists. It will be replaced.")
-                print()
-    except (ValueError, FileNotFoundError):
-        pass  # Config doesn't exist or is invalid, will be created
-
-    # Determine if interactive or non-interactive mode
-    if args.type:
-        # Non-interactive mode
-        server_type = args.type
-        command = args.command
-        url = args.url
-        server_args = args.args.split(",") if args.args else []
-        env_vars: dict[str, str] = {}
-        headers: dict[str, str] = {}
-
-        # Parse env vars (KEY=VALUE format)
-        if args.env:
-            for env_pair in args.env.split(","):
-                if "=" in env_pair:
-                    key, value = env_pair.split("=", 1)
-                    env_vars[key.strip()] = value.strip()
-
-        # Parse headers (KEY=VALUE format)
-        if args.headers:
-            for header_pair in args.headers.split(","):
-                if "=" in header_pair:
-                    key, value = header_pair.split("=", 1)
-                    headers[key.strip()] = value.strip()
-
-    else:
-        # Interactive mode
-        print(f"Adding new MCP server: {server_name}")
-        print()
-
-        # Prompt for type
-        while True:
-            server_type = input("Type (stdio/http) [stdio]: ").strip().lower() or "stdio"
-            if server_type in ("stdio", "http"):
-                break
-            print("  Invalid type. Please enter 'stdio' or 'http'.")
-
-        command = None
-        url = None
-        server_args = []
-        env_vars = {}
-        headers = {}
-
-        if server_type == "stdio":
-            # Prompt for command
-            command = input("Command (e.g., npx, node, python): ").strip()
-            if not command:
-                print("Error: Command is required for stdio servers.")
-                return EXIT_CONFIG_ERROR
-
-            # Prompt for args
-            args_input = input("Arguments (comma-separated, e.g., -y,@mcp/package): ").strip()
-            if args_input:
-                server_args = [arg.strip() for arg in args_input.split(",")]
-
-            # Prompt for env vars
-            print("Environment variables (KEY=VALUE, one per line, empty line to finish):")
-            while True:
-                env_input = input("  ").strip()
-                if not env_input:
-                    break
-                if "=" in env_input:
-                    key, value = env_input.split("=", 1)
-                    env_vars[key.strip()] = value.strip()
-                else:
-                    print("    Invalid format. Use KEY=VALUE.")
-
-        else:  # http
-            # Prompt for URL
-            url = input("URL (e.g., https://api.example.com/mcp): ").strip()
-            if not url:
-                print("Error: URL is required for HTTP servers.")
-                return EXIT_CONFIG_ERROR
-
-            # Prompt for headers
-            print("Headers (KEY=VALUE, one per line, empty line to finish):")
-            while True:
-                header_input = input("  ").strip()
-                if not header_input:
-                    break
-                if "=" in header_input:
-                    key, value = header_input.split("=", 1)
-                    headers[key.strip()] = value.strip()
-                else:
-                    print("    Invalid format. Use KEY=VALUE.")
-
-    # Create server object
-    if server_type == "stdio":
-        if not command:
-            print("Error: Command is required for stdio servers.")
-            return EXIT_CONFIG_ERROR
-        server = MCPServer(
-            name=server_name,
-            type="stdio",
-            command=command,
-            args=server_args,
-            env=env_vars,
-        )
-    else:  # http
-        if not url:
-            print("Error: URL is required for HTTP servers.")
-            return EXIT_CONFIG_ERROR
-        server = MCPServer(
-            name=server_name,
-            type="http",
-            url=url,
-            headers=headers,
-        )
-
-    print()
-    print(f"Adding server '{server_name}'...")
-
-    try:
-        # Add to config
-        add_server_to_config(config_path, server)
-        print(f"  Added to {config_path}")
-
-        # Sync to all platforms
-        print()
-        print("Syncing to platforms...")
-        config = load_config(config_path)
-        report = sync_all(config)
-
-        # Print results
-        for platform_name, count in report.servers_synced.items():
-            if count > 0:
-                print(f"  {platform_name} - {count} servers synced")
-            else:
-                print(f"  {platform_name} - failed")
-
-        if report.errors:
-            print()
-            for error_msg in report.errors:
-                print(f"  Error: {error_msg}")
-
-        print()
-        if report.errors:
-            print(f"Server '{server_name}' added with partial sync.")
-            return EXIT_PARTIAL
-        else:
-            print(f"Server '{server_name}' added and synced to all platforms.")
-            return EXIT_SUCCESS
-
-    except Exception as e:
-        print(f"Fatal error: {e}")
-        return EXIT_FATAL
-
-
-def cmd_remove(args: argparse.Namespace) -> int:
-    """Execute remove command.
-
-    ABOUTME: Removes an MCP server from config by name
-    ABOUTME: Syncs removal to all platforms
-    """
-    print(f"mcpx remove v{__version__}")
-    print()
-
-    server_name = args.name
-    config_path = get_config_path()
-
-    print(f"Removing server '{server_name}'...")
-
-    try:
-        # Remove from config
-        removed = remove_server_from_config(config_path, server_name)
-
-        if not removed:
-            print(f"  Server '{server_name}' not found in config.")
-            return EXIT_CONFIG_ERROR
-
-        print(f"  Removed from {config_path}")
-
-        # Sync to all platforms
-        print()
-        print("Syncing to platforms...")
-        config = load_config(config_path)
-        report = sync_all(config)
-
-        # Print results
-        for platform_name, count in report.servers_synced.items():
-            if count > 0:
-                print(f"  {platform_name} - {count} servers synced")
-            else:
-                print(f"  {platform_name} - failed")
-
-        if report.errors:
-            print()
-            for error_msg in report.errors:
-                print(f"  Error: {error_msg}")
-
-        print()
-        if report.errors:
-            print(f"Server '{server_name}' removed with partial sync.")
-            return EXIT_PARTIAL
-        else:
-            print(f"Server '{server_name}' removed and synced to all platforms.")
-            return EXIT_SUCCESS
-
-    except FileNotFoundError:
-        print(f"Error: Config file not found at {config_path}")
-        print()
-        print("Run 'mcpx sync' first to create a config.")
+def _port_mcp(source: str, target_ids: list[str], dry_run: bool) -> int:
+    path = get_manifest_path()
+    if not path.exists():
+        print(f"Error: no manifest at {path}. Run 'mcpx import' first.")
         return EXIT_CONFIG_ERROR
-    except Exception as e:
-        print(f"Fatal error: {e}")
-        return EXIT_FATAL
+    manifest = load_manifest(path)
+
+    print(f"mcpx port v{__version__}")
+    print(f"Source: {REGISTRY[source].display_name} ({len(manifest.servers)} servers)")
+    if dry_run:
+        print("(dry-run — no files will be written)")
+    print()
+
+    report = port(manifest.servers, target_ids, source_id=source, dry_run=dry_run)
+    for result in report.results:
+        desc = REGISTRY[result.tool_id]
+        verb = "would write" if dry_run else "wrote"
+        print(f"  {desc.display_name}: {verb} {len(result.written)} server(s)"
+              + (f", skipped {len(result.skipped)}" if result.skipped else ""))
+        for warning in result.warnings:
+            print(f"    ! {warning}")
+    print()
+    total_warnings = len(report.warnings)
+    summary = "Dry-run complete" if dry_run else "Port complete"
+    print(f"{summary}: {len(report.results)} tool(s), {total_warnings} warning(s)")
+    return EXIT_PARTIAL if total_warnings else EXIT_SUCCESS
+
+
+def _port_skills(source: str, target_ids: list[str], dry_run: bool) -> int:
+    skills = load_skills_from_store(get_skills_store_dir())
+    if not skills:
+        print("Error: no skills in store. Run 'mcpx import --skills' first.")
+        return EXIT_CONFIG_ERROR
+
+    print(f"mcpx port v{__version__} (skills)")
+    print(f"Source: {REGISTRY[source].display_name} ({len(skills)} skills)")
+    if dry_run:
+        print("(dry-run — no files will be written)")
+    print()
+
+    total_warnings = 0
+    for tool_id in target_ids:
+        if tool_id == source:
+            continue
+        desc = REGISTRY[tool_id]
+        result = export_skills(desc, skills, dry_run=dry_run)
+        verb = "would write" if dry_run else "wrote"
+        print(f"  {desc.display_name}: {verb} {len(result.written)} skill(s)")
+        for warning in result.warnings:
+            print(f"    ! {warning}")
+        total_warnings += len(result.warnings)
+
+    print()
+    summary = "Dry-run complete" if dry_run else "Skills port complete"
+    print(f"{summary}: {len(target_ids)} tool(s), {total_warnings} warning(s)")
+    return EXIT_PARTIAL if total_warnings else EXIT_SUCCESS
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Update all installed CLI tools via their declarative update recipes."""
+    print(f"mcpx update v{__version__}")
+    print("Updating installed CLI tools...")
+    print()
+
+    # Print each command before running it (traceability), then run.
+    descriptors = list(REGISTRY.values())
+    for desc in descriptors:
+        recipe = desc.update
+        if recipe and recipe.command:
+            print(f"  $ {' '.join(recipe.command)}   ({desc.display_name})")
+    print()
+
+    results = run_updates(descriptors)
+
+    updated = failed = 0
+    for r in results:
+        if r.ran and r.ok:
+            print(f"  ✓ {r.display_name}: {r.message}")
+            updated += 1
+        elif r.ran and not r.ok:
+            print(f"  ✗ {r.display_name}: {r.message}")
+            failed += 1
+        else:
+            print(f"  · {r.display_name}: {r.message}")
+
+    print()
+    print(f"Update complete: {updated} updated, {failed} failed.")
+    return EXIT_PARTIAL if failed else EXIT_SUCCESS
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the argparse CLI."""
+    parser = argparse.ArgumentParser(
+        prog="mcpx",
+        description="Port MCP servers across AI coding tools (Claude Code as source).",
+    )
+    parser.add_argument("--version", "-V", action="version", version=f"mcpx v{__version__}")
+    sub = parser.add_subparsers(dest="command")
+
+    p_import = sub.add_parser("import", help="Import a tool's MCP servers or skills")
+    p_import.add_argument("--source", "--from", dest="source", default="claude",
+                          help="Source tool id (default: claude)")
+    p_import.add_argument("--skills", action="store_true",
+                          help="Import skills instead of MCP servers")
+
+    p_list = sub.add_parser("list", help="List MCP servers or skills in the store")
+    p_list.add_argument("--skills", action="store_true", help="List skills instead of servers")
+
+    p_port = sub.add_parser("port", help="Port MCP servers or skills to target tools")
+    p_port.add_argument("--source", "--from", dest="source", default="claude",
+                        help="Source tool id (default: claude)")
+    p_port.add_argument("--to", help="Comma-separated target tool ids (default: all installed)")
+    p_port.add_argument("--kind", choices=["mcp", "skills"], default="mcp",
+                        help="What to port (default: mcp)")
+    p_port.add_argument("--dry-run", action="store_true",
+                        help="Show what would be written without writing")
+    p_port.add_argument("--yes", "-y", action="store_true",
+                        help="Write without confirmation prompt")
+
+    sub.add_parser("update", help="Update all installed CLI tools to their latest versions")
+    return parser
 
 
 def main() -> int:
-    """Main CLI entry point.
-
-    ABOUTME: Parses args and dispatches to appropriate command
-    ABOUTME: Returns exit code for sys.exit()
-    """
-    parser = argparse.ArgumentParser(
-        prog="mcpx",
-        description="Universal MCP server sync manager for AI coding assistants"
-    )
-
-    parser.add_argument(
-        "--version", "-V",
-        action="version",
-        version=f"mcpx v{__version__}"
-    )
-
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # sync command
-    subparsers.add_parser(
-        "sync",
-        help="Sync global config to all platforms"
-    )
-
-    # list command
-    subparsers.add_parser(
-        "list",
-        help="List all MCPs in source config"
-    )
-
-    # validate command
-    subparsers.add_parser(
-        "validate",
-        help="Validate config without syncing"
-    )
-
-    # init command
-    subparsers.add_parser(
-        "init",
-        help="Initialize project-level MCP configuration"
-    )
-
-    # add command
-    add_parser = subparsers.add_parser(
-        "add",
-        help="Add a new MCP server to config"
-    )
-    add_parser.add_argument(
-        "name",
-        help="Name of the MCP server to add"
-    )
-    add_parser.add_argument(
-        "--type",
-        choices=["stdio", "http"],
-        help="Server type (stdio or http)"
-    )
-    add_parser.add_argument(
-        "--command",
-        help="Command to run (for stdio type)"
-    )
-    add_parser.add_argument(
-        "--url",
-        help="URL endpoint (for http type)"
-    )
-    add_parser.add_argument(
-        "--args",
-        help="Comma-separated arguments (for stdio type)"
-    )
-    add_parser.add_argument(
-        "--env",
-        help="Comma-separated KEY=VALUE environment variables"
-    )
-    add_parser.add_argument(
-        "--headers",
-        help="Comma-separated KEY=VALUE headers (for http type)"
-    )
-
-    # remove command
-    remove_parser = subparsers.add_parser(
-        "remove",
-        help="Remove an MCP server from config"
-    )
-    remove_parser.add_argument(
-        "name",
-        help="Name of the MCP server to remove"
-    )
-
-    # Parse args
+    """CLI entry point."""
+    parser = build_parser()
     args = parser.parse_args()
 
-    # Dispatch to command
-    if args.command == "sync":
-        return cmd_sync(args)
-    elif args.command == "list":
+    if args.command == "import":
+        return cmd_import(args)
+    if args.command == "list":
         return cmd_list(args)
-    elif args.command == "validate":
-        return cmd_validate(args)
-    elif args.command == "init":
-        return cmd_init()
-    elif args.command == "add":
-        return cmd_add(args)
-    elif args.command == "remove":
-        return cmd_remove(args)
-    else:
-        # No command specified, show help
-        parser.print_help()
-        return EXIT_SUCCESS
+    if args.command == "port":
+        return cmd_port(args)
+    if args.command == "update":
+        return cmd_update(args)
+
+    parser.print_help()
+    return EXIT_SUCCESS
 
 
 if __name__ == "__main__":
