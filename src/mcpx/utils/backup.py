@@ -142,14 +142,14 @@ def cleanup_old_backups(backup_dir: Path, max_backups_per_platform: int = 5) -> 
         backups_by_platform[platform].append((timestamp, file_path))
 
     # For each platform, sort by timestamp (newest first) and delete old ones
-    for platform, backups in backups_by_platform.items():
+    for backups in backups_by_platform.values():
         # Sort by timestamp descending (newest first)
         backups.sort(key=lambda x: x[0], reverse=True)
 
         # Keep only the first max_backups_per_platform, delete the rest
         backups_to_delete = backups[max_backups_per_platform:]
 
-        for timestamp, file_path in backups_to_delete:
+        for _timestamp, file_path in backups_to_delete:
             try:
                 file_path.unlink()
                 deleted_files.append(file_path)
