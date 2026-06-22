@@ -1,8 +1,8 @@
 # mcpx
 
-**Port MCP servers across your AI coding tools from one source of truth.**
+**Port your MCP servers and skills across your AI coding tools from one source of truth.**
 
-Define your MCP servers once (in Claude Code), and `mcpx` converts and writes them into every other tool's native config format — Codex, OpenCode, Cline, Kilo, Gemini — handling each tool's quirks for you.
+Define your MCP servers and skills once (in Claude Code), and `mcpx` converts and writes them into every other tool's native format — Codex, OpenCode, Cline, Kilo, Gemini — handling each tool's quirks for you. It can also update all your CLI tools in one command.
 
 ```
 mcpx import          # pull MCP servers from Claude Code into ~/.mcpx/manifest.json
@@ -97,6 +97,29 @@ mcpx port --dry-run             # preview exactly what would be written — writ
 
 Always safe to run `--dry-run` first.
 
+### Skills — port Claude skills to your other tools
+
+The ecosystem standardized on a shared `SKILL.md` format, so mcpx can copy your Claude Code skills (and their helper files) into every other tool's native skills directory.
+
+```bash
+mcpx import --skills                       # copy ~/.claude/skills into ~/.mcpx/store/skills
+mcpx list --skills                         # show what's in the store
+mcpx port --kind skills --to opencode      # write them to a tool's skills dir
+mcpx port --kind skills --dry-run          # preview, writes nothing
+```
+
+| Tool | Skills land in | Notes |
+|---|---|---|
+| Codex | `~/.codex/skills/` | drops `allowed-tools`/`model` frontmatter (warns) |
+| OpenCode | `~/.config/opencode/skills/` | drops `allowed-tools`/`model` |
+| Gemini | `~/.gemini/skills/` | full SKILL.md spec (nothing dropped) |
+| Cline | `~/.cline/skills/` | drops `allowed-tools`/`model` |
+| Kilo | `~/.kilo/skills/` | full spec |
+
+- **Multi-file skills** (scripts, references) are copied byte-exact. **Dependency junk** (`node_modules`, `.git`, lockfiles, `.temp-*`, `.DS_Store`) is skipped by pattern.
+- Symlinked skills are resolved. Directories without a `SKILL.md` are skipped.
+- Frontmatter keys a target can't represent are dropped **with a warning** — body and helper files are never lost.
+
 ## Typical workflow
 
 ```bash
@@ -152,8 +175,10 @@ uv run ruff check src tests        # lint
 
 ## Status & scope
 
-- ✅ **MCP servers** — port across all six tools. Verified end-to-end against OpenCode (all servers connect, including HTTP).
-- 🔜 **Skills / commands / agents** — designed, not yet built. The IR/descriptor architecture has clean seams for it. See `.planning/research/`.
+- ✅ **MCP servers** — port across all six tools. Verified end-to-end against OpenCode + Codex (servers connect, including HTTP via the Codex bridge).
+- ✅ **Skills** — port Claude skills (+ helper files) to all five tools. Verified: OpenCode's `debug skill` recognizes every ported skill.
+- ✅ **`mcpx update`** — update all installed CLI tools in one command.
+- 🔜 **Commands / agents** — next; the IR/descriptor architecture has clean seams for them.
 - See `.planning/research/DEFERRED_ITEMS.md` for known follow-ups (literal-secret detection, unset-`${VAR}` warnings, optional `validate`).
 
 ## License
