@@ -61,6 +61,26 @@ MCP servers in ~/.mcpx/manifest.json:
 Total: 3 server(s)
 ```
 
+### `mcpx update` — update all your CLI tools
+
+```bash
+mcpx update
+```
+
+Updates every installed CLI tool in one shot, each via its own updater:
+
+```
+✓ Claude Code: updated        # claude update
+✓ Gemini CLI: updated         # npm install -g @google/gemini-cli@latest
+✓ Codex CLI: updated          # codex update
+✓ OpenCode: updated           # opencode upgrade
+· Cline: Update via VS Code Extensions panel
+· Kilo Code: Update via VS Code Extensions panel
+Update complete: 4 updated, 0 failed.
+```
+
+Each tool's update command is a declarative recipe on its descriptor (traceable, no hardcoded branches). Tools that aren't installed are skipped; VS Code extensions (Cline, Kilo) print guidance since they can't be updated from a shell.
+
 ### `mcpx port` — write servers to your tools
 
 ```bash

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from mcpx.descriptors.types import FieldMap, MCPSpec, ToolDescriptor, transport_field
+from mcpx.update import UpdateRecipe
 
 CLAUDE = ToolDescriptor(
     id="claude",
     display_name="Claude Code",
     config_paths={"mcp": "~/.claude.json"},
     fmt="json",
+    update=UpdateRecipe(command=["claude", "update"]),
     mcp=MCPSpec(
         container_key="mcpServers",
         supports_http=True,

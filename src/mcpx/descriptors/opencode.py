@@ -10,6 +10,7 @@ from mcpx.descriptors.types import (
     command_array_to_native,
 )
 from mcpx.ir import Transport
+from mcpx.update import UpdateRecipe
 
 # OpenCode uses local/remote (NOT stdio/http). Custom transforms, not the shared helper.
 _TRANSPORT = FieldMap(
@@ -42,6 +43,7 @@ OPENCODE = ToolDescriptor(
     display_name="OpenCode",
     config_paths={"mcp": "~/.config/opencode/opencode.jsonc"},
     fmt="jsonc",
+    update=UpdateRecipe(command=["opencode", "upgrade"]),
     mcp=MCPSpec(
         container_key="mcp",
         supports_http=True,

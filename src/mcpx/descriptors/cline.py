@@ -9,6 +9,7 @@ from mcpx.descriptors.types import (
     vscode_globalstorage_path,
 )
 from mcpx.ir import Transport
+from mcpx.update import UpdateRecipe
 
 # Cline transport: stdio -> "stdio"; http -> "streamableHttp" (explicit, avoids SSE-default #6767).
 _TRANSPORT = FieldMap(
@@ -25,6 +26,8 @@ CLINE = ToolDescriptor(
         "mcp": vscode_globalstorage_path("saoudrizwan.claude-dev", "cline_mcp_settings.json")
     },
     fmt="json",
+    # Cline is a VS Code extension — update via VS Code, not a shell command.
+    update=UpdateRecipe(note="Update via VS Code Extensions panel (Cline auto-updates there)."),
     mcp=MCPSpec(
         container_key="mcpServers",
         supports_http=True,

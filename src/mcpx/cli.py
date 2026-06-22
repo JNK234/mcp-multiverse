@@ -9,6 +9,7 @@ from mcpx import __version__
 from mcpx.descriptors import REGISTRY
 from mcpx.manifest import get_manifest_path, load_manifest
 from mcpx.port import import_to_manifest, installed_targets, port
+from mcpx.update import run_updates
 
 # Exit codes: 0 = success, 1 = partial, 2 = config error, 3 = fatal.
 EXIT_SUCCESS = 0
@@ -97,6 +98,38 @@ def cmd_port(args: argparse.Namespace) -> int:
     return EXIT_PARTIAL if total_warnings else EXIT_SUCCESS
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    """Update all installed CLI tools via their declarative update recipes."""
+    print(f"mcpx update v{__version__}")
+    print("Updating installed CLI tools...")
+    print()
+
+    # Print each command before running it (traceability), then run.
+    descriptors = list(REGISTRY.values())
+    for desc in descriptors:
+        recipe = desc.update
+        if recipe and recipe.command:
+            print(f"  $ {' '.join(recipe.command)}   ({desc.display_name})")
+    print()
+
+    results = run_updates(descriptors)
+
+    updated = failed = 0
+    for r in results:
+        if r.ran and r.ok:
+            print(f"  ✓ {r.display_name}: {r.message}")
+            updated += 1
+        elif r.ran and not r.ok:
+            print(f"  ✗ {r.display_name}: {r.message}")
+            failed += 1
+        else:
+            print(f"  · {r.display_name}: {r.message}")
+
+    print()
+    print(f"Update complete: {updated} updated, {failed} failed.")
+    return EXIT_PARTIAL if failed else EXIT_SUCCESS
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse CLI."""
     parser = argparse.ArgumentParser(
@@ -120,6 +153,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Show what would be written without writing")
     p_port.add_argument("--yes", "-y", action="store_true",
                         help="Write without confirmation prompt")
+
+    sub.add_parser("update", help="Update all installed CLI tools to their latest versions")
     return parser
 
 
@@ -134,6 +169,8 @@ def main() -> int:
         return cmd_list(args)
     if args.command == "port":
         return cmd_port(args)
+    if args.command == "update":
+        return cmd_update(args)
 
     parser.print_help()
     return EXIT_SUCCESS

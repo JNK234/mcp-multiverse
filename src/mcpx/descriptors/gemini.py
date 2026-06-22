@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from mcpx.descriptors.types import FieldMap, MCPSpec, ToolDescriptor, transport_field
+from mcpx.update import UpdateRecipe
 
 GEMINI = ToolDescriptor(
     id="gemini",
     display_name="Gemini CLI",
     config_paths={"mcp": "~/.gemini/settings.json"},
     fmt="json",
+    # Gemini has no self-update subcommand; it's distributed via npm.
+    update=UpdateRecipe(command=["npm", "install", "-g", "@google/gemini-cli@latest"]),
     mcp=MCPSpec(
         container_key="mcpServers",
         supports_http=True,

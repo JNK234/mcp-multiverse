@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from mcpx.ir import MCPServerIR
+    from mcpx.update import UpdateRecipe
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,8 @@ class ToolDescriptor:
     config_paths: dict[str, str]
     fmt: str
     mcp: MCPSpec | None = None
+    # How this tool self-updates (declarative recipe). None only if truly unknown.
+    update: UpdateRecipe | None = None
     # default_kinds reserved for later (artifact porting); unused this cut.
     _reserved: dict[str, Any] = field(default_factory=dict)
 

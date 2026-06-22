@@ -9,6 +9,7 @@ from mcpx.descriptors.types import (
     vscode_globalstorage_path,
 )
 from mcpx.ir import Transport
+from mcpx.update import UpdateRecipe
 
 _TRANSPORT = FieldMap(
     ir_field="transport",
@@ -24,6 +25,8 @@ KILO = ToolDescriptor(
         "mcp": vscode_globalstorage_path("kilocode.kilo-code", "mcp_settings.json")
     },
     fmt="json",
+    # Kilo is a VS Code extension — update via VS Code, not a shell command.
+    update=UpdateRecipe(note="Update via VS Code Extensions panel (Kilo Code auto-updates there)."),
     mcp=MCPSpec(
         container_key="mcpServers",
         supports_http=True,

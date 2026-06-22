@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from mcpx.descriptors.types import FieldMap, HTTPBridge, MCPSpec, ToolDescriptor
+from mcpx.update import UpdateRecipe
 
 CODEX = ToolDescriptor(
     id="codex",
     display_name="Codex CLI",
     config_paths={"mcp": "~/.codex/config.toml"},
     fmt="toml-flat",
+    update=UpdateRecipe(command=["codex", "update"]),
     mcp=MCPSpec(
         container_key="mcp_servers",
         # Codex 'supports' HTTP at the config level, but its native streamable-HTTP client
