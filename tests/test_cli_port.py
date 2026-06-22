@@ -39,11 +39,15 @@ def fake_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     def fake_resolve(desc, logical="mcp"):
         return paths.get(desc.id, tmp_path / f"{desc.id}-missing.json")
 
+    backup_dir = tmp_path / "backups"
+
     # Redirect path resolution everywhere it's used.
     monkeypatch.setattr("mcpx.engine.mcp_engine.resolve_path", fake_resolve)
     monkeypatch.setattr("mcpx.port.resolve_path", fake_resolve, raising=False)
     monkeypatch.setattr("mcpx.manifest.get_manifest_path", lambda: manifest_file)
     monkeypatch.setattr("mcpx.cli.get_manifest_path", lambda: manifest_file, raising=False)
+    # Sandbox backups so tests never touch the real ~/.mcpx/backups.
+    monkeypatch.setattr("mcpx.engine.mcp_engine.get_backup_dir", lambda: backup_dir)
 
     return SimpleNamespace(
         tmp=tmp_path, manifest=manifest_file, claude=claude_file,
