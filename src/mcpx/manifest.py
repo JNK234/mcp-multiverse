@@ -2,20 +2,27 @@
 # ABOUTME: Serializes MCPServerIR <-> JSON; this is the authoritative, human-editable server set.
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
-from mcpx.ir import Manifest, MCPServerIR, Transport
+from mcpx.ir import Manifest, MCPServerIR, SkillIR, Transport
 
 MANIFEST_VERSION = "2.0"
 
 CONFIG_DIR = Path.home() / ".mcpx"
 MANIFEST_FILE = CONFIG_DIR / "manifest.json"
+SKILLS_STORE_DIR = CONFIG_DIR / "store" / "skills"
 
 
 def get_manifest_path() -> Path:
     """Return the path to the manifest file (~/.mcpx/manifest.json)."""
     return MANIFEST_FILE
+
+
+def get_skills_store_dir() -> Path:
+    """Return the skills store directory (~/.mcpx/store/skills/)."""
+    return SKILLS_STORE_DIR
 
 
 def ensure_config_dir() -> Path:
@@ -111,3 +118,39 @@ def save_manifest(manifest: Manifest, path: Path | None = None) -> None:
         "servers": {name: server_to_dict(s) for name, s in manifest.servers.items()},
     }
     codec_for("json").write(path, data)
+
+
+def save_skills_to_store(skills: dict[str, SkillIR], store: Path | None = None) -> None:
+    """Persist skills as byte-exact directories under the skills store.
+
+    ABOUTME: Each skill becomes <store>/<name>/SKILL.md + helper files. Replaces existing.
+    ABOUTME: Uses write_skill with no key dropping (the store is the canonical full copy).
+    """
+    from mcpx.codecs.skill_dir import write_skill
+
+    store = store or get_skills_store_dir()
+    store.mkdir(parents=True, exist_ok=True)
+    for name, skill in skills.items():
+        target = store / name
+        if target.exists():
+            shutil.rmtree(target)
+        write_skill(target, skill, drop_keys=())
+
+
+def load_skills_from_store(store: Path | None = None) -> dict[str, SkillIR]:
+    """Load all skills from the store back into SkillIRs.
+
+    ABOUTME: Returns {} if the store doesn't exist. Only dirs with a SKILL.md count.
+    """
+    from mcpx.codecs.skill_dir import read_skill
+
+    store = store or get_skills_store_dir()
+    if not store.exists():
+        return {}
+
+    skills: dict[str, SkillIR] = {}
+    for child in sorted(store.iterdir()):
+        if child.is_dir() and (child / "SKILL.md").exists():
+            skill = read_skill(child)
+            skills[skill.name] = skill
+    return skills

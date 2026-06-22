@@ -72,11 +72,22 @@ class MCPSpec:
 
 
 @dataclass(frozen=True)
+class SkillsSpec:
+    """How one tool stores skills — purely which frontmatter keys it can't represent.
+
+    ABOUTME: The skill dir comes from config_paths['skills']; the SKILL.md format is shared.
+    ABOUTME: drop_frontmatter_keys are removed on write (with a warning), e.g. allowed-tools.
+    """
+
+    drop_frontmatter_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ToolDescriptor:
     """Everything the engine needs to import/export one tool — as data, not code.
 
-    ABOUTME: config_paths maps a logical name (e.g. 'mcp') to a path template (~ expanded).
-    ABOUTME: fmt selects the codec (json/jsonc/toml-flat). mcp is None if the tool has no MCP.
+    ABOUTME: config_paths maps a logical name (e.g. 'mcp', 'skills') to a path template.
+    ABOUTME: fmt selects the codec (json/jsonc/toml-flat). mcp/skills are None if unsupported.
     """
 
     id: str
@@ -86,6 +97,8 @@ class ToolDescriptor:
     mcp: MCPSpec | None = None
     # How this tool self-updates (declarative recipe). None only if truly unknown.
     update: UpdateRecipe | None = None
+    # How this tool stores skills (None if no skills support / not configured this cut).
+    skills: SkillsSpec | None = None
     # default_kinds reserved for later (artifact porting); unused this cut.
     _reserved: dict[str, Any] = field(default_factory=dict)
 
