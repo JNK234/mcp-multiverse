@@ -19,6 +19,7 @@ classifiers = [
 
 dependencies = [
     "tomli>=2.0.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "types-PyYAML>=6.0",
 ]
 
 [project.scripts]
