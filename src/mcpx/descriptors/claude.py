@@ -2,15 +2,16 @@
 # ABOUTME: stdio = type/command/args/env; http = type/url/headers. ${VAR} kept verbatim.
 from __future__ import annotations
 
-from mcpx.descriptors.types import FieldMap, MCPSpec, ToolDescriptor, transport_field
+from mcpx.descriptors.types import FieldMap, MCPSpec, SkillsSpec, ToolDescriptor, transport_field
 from mcpx.update import UpdateRecipe
 
 CLAUDE = ToolDescriptor(
     id="claude",
     display_name="Claude Code",
-    config_paths={"mcp": "~/.claude.json"},
+    config_paths={"mcp": "~/.claude.json", "skills": "~/.claude/skills"},
     fmt="json",
     update=UpdateRecipe(command=["claude", "update"]),
+    skills=SkillsSpec(),  # source of truth — full SKILL.md spec
     mcp=MCPSpec(
         container_key="mcpServers",
         supports_http=True,

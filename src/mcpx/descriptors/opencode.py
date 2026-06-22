@@ -5,6 +5,7 @@ from __future__ import annotations
 from mcpx.descriptors.types import (
     FieldMap,
     MCPSpec,
+    SkillsSpec,
     ToolDescriptor,
     command_array_from_native,
     command_array_to_native,
@@ -41,9 +42,13 @@ _ENABLED = FieldMap(
 OPENCODE = ToolDescriptor(
     id="opencode",
     display_name="OpenCode",
-    config_paths={"mcp": "~/.config/opencode/opencode.jsonc"},
+    config_paths={
+        "mcp": "~/.config/opencode/opencode.jsonc",
+        "skills": "~/.config/opencode/skills",
+    },
     fmt="jsonc",
     update=UpdateRecipe(command=["opencode", "upgrade"]),
+    skills=SkillsSpec(drop_frontmatter_keys=("allowed-tools", "model")),
     mcp=MCPSpec(
         container_key="mcp",
         supports_http=True,

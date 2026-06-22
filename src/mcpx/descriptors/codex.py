@@ -2,15 +2,16 @@
 # ABOUTME: HTTP IS supported (url/http_headers/bearer); transport inferred, no `type` key.
 from __future__ import annotations
 
-from mcpx.descriptors.types import FieldMap, HTTPBridge, MCPSpec, ToolDescriptor
+from mcpx.descriptors.types import FieldMap, HTTPBridge, MCPSpec, SkillsSpec, ToolDescriptor
 from mcpx.update import UpdateRecipe
 
 CODEX = ToolDescriptor(
     id="codex",
     display_name="Codex CLI",
-    config_paths={"mcp": "~/.codex/config.toml"},
+    config_paths={"mcp": "~/.codex/config.toml", "skills": "~/.codex/skills"},
     fmt="toml-flat",
     update=UpdateRecipe(command=["codex", "update"]),
+    skills=SkillsSpec(drop_frontmatter_keys=("allowed-tools", "model")),
     mcp=MCPSpec(
         container_key="mcp_servers",
         # Codex 'supports' HTTP at the config level, but its native streamable-HTTP client

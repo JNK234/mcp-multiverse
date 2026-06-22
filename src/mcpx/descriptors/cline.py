@@ -5,6 +5,7 @@ from __future__ import annotations
 from mcpx.descriptors.types import (
     FieldMap,
     MCPSpec,
+    SkillsSpec,
     ToolDescriptor,
     vscode_globalstorage_path,
 )
@@ -23,11 +24,13 @@ CLINE = ToolDescriptor(
     id="cline",
     display_name="Cline",
     config_paths={
-        "mcp": vscode_globalstorage_path("saoudrizwan.claude-dev", "cline_mcp_settings.json")
+        "mcp": vscode_globalstorage_path("saoudrizwan.claude-dev", "cline_mcp_settings.json"),
+        "skills": "~/.cline/skills",
     },
     fmt="json",
     # Cline is a VS Code extension — update via VS Code, not a shell command.
     update=UpdateRecipe(note="Update via VS Code Extensions panel (Cline auto-updates there)."),
+    skills=SkillsSpec(drop_frontmatter_keys=("allowed-tools", "model")),
     mcp=MCPSpec(
         container_key="mcpServers",
         supports_http=True,
