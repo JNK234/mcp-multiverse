@@ -33,9 +33,45 @@ def split(text: str) -> tuple[dict[str, Any], str]:
     yaml_text = "".join(lines[1:close_idx])
     body = "".join(lines[close_idx + 1:])
 
-    parsed = yaml.safe_load(yaml_text) if yaml_text.strip() else {}
-    frontmatter: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
+    frontmatter = _parse_yaml_lenient(yaml_text)
     return frontmatter, body
+
+
+def _parse_yaml_lenient(yaml_text: str) -> dict[str, Any]:
+    """Parse frontmatter YAML, falling back to a line-based parse on strict-YAML errors.
+
+    ABOUTME: Claude SKILL.md frontmatter often has unquoted values containing ': '
+    ABOUTME: (e.g. description with "Research: X") that strict YAML rejects. Rather than
+    ABOUTME: crash, treat each top-level 'key: value' line as a string value.
+    """
+    if not yaml_text.strip():
+        return {}
+    try:
+        parsed = yaml.safe_load(yaml_text)
+        if isinstance(parsed, dict):
+            return parsed
+    except yaml.YAMLError:
+        pass
+
+    # Lenient fallback: split each top-level 'key: value' line; everything after the first
+    # ': ' is a literal string value. Continuation/indented lines append to the prior value.
+    result: dict[str, Any] = {}
+    last_key: str | None = None
+    for raw in yaml_text.splitlines():
+        if not raw.strip():
+            continue
+        if raw[:1] in (" ", "\t") and last_key is not None:
+            result[last_key] = f"{result[last_key]} {raw.strip()}".strip()
+            continue
+        if ": " in raw:
+            key, value = raw.split(": ", 1)
+            result[key.strip()] = value.strip()
+            last_key = key.strip()
+        elif raw.endswith(":"):
+            key = raw[:-1].strip()
+            result[key] = ""
+            last_key = key
+    return result
 
 
 def join(frontmatter: dict[str, Any], body: str) -> str:

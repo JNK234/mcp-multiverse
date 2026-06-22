@@ -48,12 +48,27 @@ class MCPServerIR:
 
 
 @dataclass
+class SkillIR:
+    """Canonical skill — a SKILL.md (frontmatter + body) plus helper files.
+
+    ABOUTME: Tool-agnostic skill from ~/.claude/skills/<name>/. files maps a relative
+    ABOUTME: path -> bytes for every helper file (excluding SKILL.md), kept byte-exact.
+    """
+
+    name: str
+    frontmatter: dict[str, Any] = field(default_factory=dict)
+    body: str = ""
+    files: dict[str, bytes] = field(default_factory=dict)
+
+
+@dataclass
 class Manifest:
     """The persisted IR hub (`~/.mcpx/manifest.json`).
 
-    ABOUTME: Authoritative server set imported from the source tool (Claude Code).
-    ABOUTME: artifacts (skills/commands/agents) reserved for a later cut — not used yet.
+    ABOUTME: Authoritative server set + skills imported from the source tool (Claude Code).
+    ABOUTME: Skill bodies/files live under ~/.mcpx/store/skills/; manifest holds metadata.
     """
 
     version: str
     servers: dict[str, MCPServerIR] = field(default_factory=dict)
+    skills: dict[str, SkillIR] = field(default_factory=dict)

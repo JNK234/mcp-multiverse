@@ -70,3 +70,21 @@ def test_join_empty_frontmatter_writes_body_only() -> None:
     text = join({}, "just body\n")
     assert text == "just body\n"
     assert "---" not in text
+
+
+def test_split_lenient_on_unquoted_colon_in_value() -> None:
+    """Claude frontmatter often has unquoted values with ': ' that strict YAML rejects.
+
+    The codec must fall back to a line-based parse rather than crash, keeping name/description.
+    """
+    text = (
+        "---\n"
+        'name: research-papers\n'
+        'description: Use when asked. Triggers on "Research: X", "Find: Y".\n'
+        "---\n"
+        "Body.\n"
+    )
+    fm, body = split(text)
+    assert fm["name"] == "research-papers"
+    assert "Research: X" in fm["description"]
+    assert body == "Body.\n"
