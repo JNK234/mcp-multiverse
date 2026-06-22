@@ -37,6 +37,21 @@ class FieldMap:
 
 
 @dataclass(frozen=True)
+class HTTPBridge:
+    """Render HTTP servers as a stdio command that proxies to the URL (instead of native HTTP).
+
+    ABOUTME: Some tools (Codex) have broken streamable-HTTP MCP clients, so HTTP servers must
+    ABOUTME: run through a stdio bridge like `npx mcp-remote <url> --header <h>`. This is data:
+    ABOUTME: command + a base args list; {url} is appended, and each IR header becomes
+    ABOUTME: `header_flag` + "Name: Value" so the bridge forwards it. Tokens keep ${VAR} verbatim.
+    """
+
+    command: str
+    base_args: tuple[str, ...]
+    header_flag: str = "--header"
+
+
+@dataclass(frozen=True)
 class MCPSpec:
     """How one tool stores MCP servers: the container key + field mappings.
 
@@ -44,6 +59,7 @@ class MCPSpec:
     ABOUTME: supports_http=False makes the engine skip+warn on http servers for this tool.
     ABOUTME: defaults are native keys force-written on every server (e.g. Cline disabled=false).
     ABOUTME: preserve_orphans is a seam for later — when True, keep unmanaged servers on write.
+    ABOUTME: http_bridge (if set) makes HTTP servers render as a stdio bridge command instead.
     """
 
     container_key: str
@@ -51,6 +67,7 @@ class MCPSpec:
     supports_http: bool = True
     defaults: tuple[tuple[str, Any], ...] = ()
     preserve_orphans: bool = False
+    http_bridge: HTTPBridge | None = None
 
 
 @dataclass(frozen=True)

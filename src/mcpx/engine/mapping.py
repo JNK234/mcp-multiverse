@@ -12,12 +12,32 @@ def _is_empty(value: Any) -> bool:
     return value is None or value == [] or value == {} or value == ""
 
 
+def _render_http_bridge(spec: MCPSpec, server: MCPServerIR) -> dict[str, Any]:
+    """Render an HTTP server as a stdio bridge command (e.g. npx mcp-remote <url> --header ...).
+
+    ABOUTME: For tools whose native HTTP MCP client is broken. Headers become `--header
+    ABOUTME: "Name: Value"` args; values keep ${VAR} references verbatim. Returns a stdio dict.
+    """
+    bridge = spec.http_bridge
+    assert bridge is not None
+    args = [*bridge.base_args]
+    if server.url:
+        args.append(server.url)
+    for name, value in server.headers.items():
+        args.extend([bridge.header_flag, f"{name}: {value}"])
+    return {"command": bridge.command, "args": args}
+
+
 def render_native_from_ir(spec: MCPSpec, tool_id: str, server: MCPServerIR) -> dict[str, Any]:
     """Render one IR server into this tool's native server dict via the descriptor's FieldMaps.
 
+    ABOUTME: HTTP servers route through http_bridge if the spec defines one (broken-HTTP tools).
     ABOUTME: Composite maps receive the whole server; simple maps receive one IR attribute.
     ABOUTME: Applies omit_if_empty, then forced defaults, then merges back extra[tool_id].
     """
+    if server.transport is Transport.HTTP and spec.http_bridge is not None:
+        return _render_http_bridge(spec, server)
+
     native: dict[str, Any] = {}
 
     for fm in spec.fields:

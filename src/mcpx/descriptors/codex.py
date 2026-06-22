@@ -2,7 +2,7 @@
 # ABOUTME: HTTP IS supported (url/http_headers/bearer); transport inferred, no `type` key.
 from __future__ import annotations
 
-from mcpx.descriptors.types import FieldMap, MCPSpec, ToolDescriptor
+from mcpx.descriptors.types import FieldMap, HTTPBridge, MCPSpec, ToolDescriptor
 
 CODEX = ToolDescriptor(
     id="codex",
@@ -11,10 +11,15 @@ CODEX = ToolDescriptor(
     fmt="toml-flat",
     mcp=MCPSpec(
         container_key="mcp_servers",
-        # Codex DOES support streamable HTTP MCP. (Old mcpx dropped HTTP — that was a bug.)
+        # Codex 'supports' HTTP at the config level, but its native streamable-HTTP client
+        # fails the handshake with SSE servers (e.g. z.ai), so we BRIDGE HTTP via stdio
+        # mcp-remote instead. supports_http stays True so HTTP servers aren't skipped.
         supports_http=True,
-        # No `type` discriminator: Codex infers stdio (command) vs streamable_http (url).
-        # The engine infers IR.transport from url presence on read; nothing to write.
+        # HTTP servers render as: npx -y mcp-remote <url> --header "Name: Value"
+        # (verified to connect where Codex's native HTTP client throws on the
+        #  `initialized` notification — a known upstream Codex bug).
+        http_bridge=HTTPBridge(command="npx", base_args=("-y", "mcp-remote")),
+        # stdio servers map normally; transport inferred from url presence on read.
         fields=(
             FieldMap("command", "command"),
             FieldMap("args", "args"),

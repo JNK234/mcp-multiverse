@@ -105,6 +105,10 @@ Claude Code ──import──▶  Canonical IR  ──port──▶  Codex / Op
 - **One generic engine** (`engine/mapping.py`) — applies the descriptor's `FieldMap`s in both directions. Because import and export are symmetric, reverse-sync (tool → Claude) and tool ↔ tool are natural future extensions.
 - **Format codecs** (`codecs/`) — read/write JSON, JSONC (comment-tolerant, preserves `$schema`), and TOML, preserving everything they don't manage.
 
+### Per-tool quirks handled for you
+
+- **Codex + HTTP servers** — Codex's native streamable-HTTP MCP client can't complete the handshake with SSE-style servers (a known upstream bug). So mcpx ports HTTP servers to Codex as a **stdio bridge** — `npx -y mcp-remote <url> --header "Authorization: Bearer …"` — which connects reliably (verified: zero handshake errors). stdio servers are written natively. This requires Node/`npx` (the first run downloads `mcp-remote`). Other tools (OpenCode, Cline) get native HTTP, which they handle fine.
+
 ### Secrets
 
 `mcpx` writes `${VAR}` references **verbatim** — it never expands them into literal values, so it won't scatter plaintext secrets across config files. (If your *source* already stores a literal secret, mcpx carries it as-is; it doesn't invent references. See `.planning/research/DEFERRED_ITEMS.md`.)

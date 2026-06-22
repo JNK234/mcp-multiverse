@@ -60,14 +60,17 @@ def test_opencode_roundtrip_splits_command_array() -> None:
     assert back.env == {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}
 
 
-# --- Codex: HTTP supported (bug fix), bearer, no type key --------------
+# --- Codex: HTTP bridged via mcp-remote, no type key -------------------
 
-def test_codex_http_supported_with_bearer() -> None:
+def test_codex_http_renders_as_mcp_remote_bridge() -> None:
+    # Codex's native streamable-HTTP client is broken for SSE servers, so HTTP
+    # servers are bridged through stdio mcp-remote. Full bridge coverage lives in
+    # test_http_bridge.py; here we assert HTTP -> stdio command, not native url.
     assert CODEX.mcp.supports_http is True
     native = render_native_from_ir(CODEX.mcp, "codex", _http())
-    assert native["url"] == "https://mcp.supabase.com/mcp"
-    assert native["http_headers"] == {"X-Org": "acme"}
-    assert native["bearer_token_env_var"] == "SUPABASE_TOKEN"
+    assert native["command"] == "npx"
+    assert "url" not in native
+    assert native["args"][:3] == ["-y", "mcp-remote", "https://mcp.supabase.com/mcp"]
     # Codex has no `type` discriminator
     assert "type" not in native
 
