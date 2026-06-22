@@ -20,16 +20,18 @@ PlatformName = Literal[
 ]
 
 
-def create_backup(source_path: Path, backup_dir: Path) -> Path:
+def create_backup(source_path: Path, backup_dir: Path, label: str | None = None) -> Path:
     """Create a timestamped backup of a file.
 
-    ABOUTME: Backup format: {platform}_{YYYYMMDD}_{HHMMSS}.{ext}
+    ABOUTME: Backup format: {label}_{YYYYMMDD}_{HHMMSS}.{ext}
     ABOUTME: Uses shutil.copy2() to preserve file metadata
     ABOUTME: Creates backup_dir if it doesn't exist
 
     Args:
         source_path: Path to file to backup
         backup_dir: Directory where backup should be created
+        label: Backup name prefix (e.g. a tool descriptor id). Falls back to the
+            filename stem when not given, preserving legacy behavior.
 
     Returns:
         Path to created backup file
@@ -41,7 +43,7 @@ def create_backup(source_path: Path, backup_dir: Path) -> Path:
     Examples:
         >>> source = Path("~/.claude.json").expanduser()
         >>> backup_dir = Path("~/.mcpx/backups").expanduser()
-        >>> backup_path = create_backup(source, backup_dir)
+        >>> backup_path = create_backup(source, backup_dir, label="claude")
         >>> backup_path.name
         'claude_20260108_143022.json'
     """
@@ -54,11 +56,12 @@ def create_backup(source_path: Path, backup_dir: Path) -> Path:
     # Generate timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Extract platform name from parent dir or use filename stem
-    # e.g., ~/.claude.json -> claude
-    # e.g., settings.json -> settings
-    filename = source_path.name
-    platform = filename.replace(".", "_").split("_")[0]
+    # Use the explicit label (e.g. tool id) for traceable backups, else derive from filename.
+    if label:
+        platform = label
+    else:
+        filename = source_path.name
+        platform = filename.replace(".", "_").split("_")[0]
 
     # Build backup filename: {platform}_{YYYYMMDD}_{HHMMSS}.{ext}
     extension = source_path.suffix
