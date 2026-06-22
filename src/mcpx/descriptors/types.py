@@ -87,6 +87,31 @@ def command_array_from_native(native: dict[str, Any]) -> dict[str, Any]:
     return {"command": arr[0], "args": list(arr[1:])}
 
 
+def vscode_globalstorage_path(extension_id: str, filename: str) -> str:
+    """Resolve a VS Code globalStorage settings file, preferring an existing Code/Insiders variant.
+
+    ABOUTME: Shared by VS Code-hosted tools (Cline, Kilo). OS-specific user-data base.
+    """
+    import os
+    import sys
+    from pathlib import Path
+
+    if sys.platform == "darwin":
+        base = Path.home() / "Library/Application Support"
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+    else:
+        base = Path.home() / ".config"
+
+    def settings_file(variant: str) -> Path:
+        return base / variant / "User/globalStorage" / extension_id / "settings" / filename
+
+    for variant in ("Code", "Code - Insiders"):
+        if settings_file(variant).exists():
+            return str(settings_file(variant))
+    return str(settings_file("Code"))
+
+
 # Native transport-discriminator strings that mean "remote/http" across tools.
 _HTTP_ALIASES = ("http", "sse", "streamable-http", "streamableHttp", "ws", "remote")
 
